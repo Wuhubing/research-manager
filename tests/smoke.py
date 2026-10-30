@@ -77,8 +77,8 @@ REAL_FILES = [REAL_HOME / ".research-manager" / n for n in ("watch.json", "links
 real_before = {f: f.stat().st_mtime if f.exists() else None for f in REAL_FILES}
 
 sys.path.insert(0, str(REPO))
-import lab  # noqa: E402
 import server  # noqa: E402
+from research_manager import manager, prompts  # noqa: E402
 
 # ---------------------------------------------------------------- 检查工具
 
@@ -163,7 +163,7 @@ def http_checks():
                           "context", "continues", "handoff"} <= d.keys(), sorted(d))
     act = d.get("activity") or ""
     check("动态里有研究者的话和 agent 的回答", "SMOKE_USER_TEXT" in act and "SMOKE_AGENT_TEXT" in act, act[:300])
-    check("还没有主线时返回主线模板", d.get("mainline") == lab.MAINLINE_TEMPLATE, d.get("mainline"))
+    check("还没有主线时返回主线模板", d.get("mainline") == prompts.MAINLINE_TEMPLATE, d.get("mainline"))
     check("没有历史、接替关系和交接", d.get("history") == [] and d.get("continues") is None and d.get("handoff") is None,
           {k: d.get(k) for k in ("history", "continues", "handoff")})
     code, _ = call("GET", "/api/sessions/not-a-uuid")
@@ -189,14 +189,14 @@ def capture(mgr, **kw):
         got.update(cmd=cmd, cwd=popen_kw.get("cwd"))
         raise Captured
 
-    real = lab.subprocess.Popen
-    lab.subprocess.Popen = fake
+    real = manager.subprocess.Popen
+    manager.subprocess.Popen = fake
     try:
         mgr.run_claude("smoke", **kw)
     except Captured:
         pass
     finally:
-        lab.subprocess.Popen = real
+        manager.subprocess.Popen = real
     return got.get("cmd") or [], got.get("cwd")
 
 
@@ -216,10 +216,10 @@ def values(cmd, flag):
 
 def command_checks():
     print("管家的权限（会话在项目子目录里）")
-    check("git_root(子目录) 是仓库根目录", lab.git_root(SUB) == PROJ, lab.git_root(SUB))
-    check("不是 git 仓库时 git_root 退回原目录", lab.git_root(OTHER) == OTHER, lab.git_root(OTHER))
+    check("git_root(子目录) 是仓库根目录", manager.git_root(SUB) == PROJ, manager.git_root(SUB))
+    check("不是 git 仓库时 git_root 退回原目录", manager.git_root(OTHER) == OTHER, manager.git_root(OTHER))
 
-    mgr = lab.Lab(SUB, work=MAIN)       # 先创建（git_root 要真的调用 git），再截获命令
+    mgr = manager.Lab(SUB, work=MAIN)       # 先创建（git_root 要真的调用 git），再截获命令
     check("管家的项目目录是 git 根目录", mgr.project == PROJ, mgr.project)
     cmd, cwd = capture(mgr)
     check("截获到 claude -p 命令", cmd[:2] == ["claude", "-p"], cmd[:3])
@@ -241,16 +241,16 @@ def command_checks():
     check("--disallowedTools 覆盖 git 根目录下的 5 类密钥文件（Read 和 Grep 各一条）",
           set(denied) == {f"{t}(/{PROJ}/{p})" for t in ("Read", "Grep") for p in secrets}, denied)
     check("第一次调用：没有 --resume，带上管家的系统提示词",
-          "--resume" not in cmd and values(cmd, "--append-system-prompt") == [lab.SYSTEM], cmd[-4:])
+          "--resume" not in cmd and values(cmd, "--append-system-prompt") == [prompts.SYSTEM], cmd[-4:])
 
     mgr.state["manager_session"] = "55555555-5555-4555-8555-555555555555"
     cmd, _ = capture(mgr)
     check("有管家会话后：--resume 接着它的会话，不再带系统提示词",
           values(cmd, "--resume") == ["55555555-5555-4555-8555-555555555555"] and "--append-system-prompt" not in cmd,
           cmd[-4:])
-    cmd, _ = capture(mgr, resume=False, system=lab.HANDOFF_SYSTEM)
+    cmd, _ = capture(mgr, resume=False, system=prompts.HANDOFF_SYSTEM)
     check("一次性调用（交接）：不 --resume，用交接提示词，不保存会话",
-          "--resume" not in cmd and values(cmd, "--append-system-prompt") == [lab.HANDOFF_SYSTEM]
+          "--resume" not in cmd and values(cmd, "--append-system-prompt") == [prompts.HANDOFF_SYSTEM]
           and "--no-session-persistence" in cmd, cmd[-4:])
 
 

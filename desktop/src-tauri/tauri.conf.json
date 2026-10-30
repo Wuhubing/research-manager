@@ -39,8 +39,16 @@
     "resources": {
       "../../server.py": "core/server.py",
       "../../lab.py": "core/lab.py",
+      "../../research_manager/__init__.py": "core/research_manager/__init__.py",
+      "../../research_manager/cli.py": "core/research_manager/cli.py",
+      "../../research_manager/macos.py": "core/research_manager/macos.py",
+      "../../research_manager/manager.py": "core/research_manager/manager.py",
+      "../../research_manager/prompts.py": "core/research_manager/prompts.py",
+      "../../research_manager/sessions.py": "core/research_manager/sessions.py",
+      "../../research_manager/settings.py": "core/research_manager/settings.py",
+      "../../research_manager/voice.py": "core/research_manager/voice.py",
+      "../../research_manager/watch.py": "core/research_manager/watch.py",
       "../../static/index.html": "core/static/index.html",
-      "../../static/projects.html": "core/static/projects.html",
       "../../static/logo.png": "core/static/logo.png"
     },
     "macOS": {

@@ -59,7 +59,6 @@ fn start_server(app: &AppHandle) -> Option<Child> {
         .args(["-lc", "exec python3 server.py"])
         .current_dir(core_dir(app))
         .env("PATH", path)
-        .env("RM_DATA_DIR", base.join("data"))
         .stdout(Stdio::from(log.try_clone().ok()?))
         .stderr(Stdio::from(log))
         .spawn()

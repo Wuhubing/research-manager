@@ -152,14 +152,18 @@ lab
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `RM_PORT` | `8765` | 网页端口 |
-| `RM_CLAUDE_MODEL` / `LAB_CLAUDE_MODEL` | Claude 默认模型 | 例如 `sonnet`，速度更快 |
+| `LAB_CLAUDE_MODEL` | Claude 默认模型 | 管家用的模型，例如 `sonnet`，速度更快 |
 | `OPENAI_API_KEY` | 读 `~/.research-manager/openai_key` | 语音识别用的 OpenAI key |
 | `LAB_OPENAI_ASR_MODEL` | `gpt-4o-transcribe` | 可改成 `gpt-4o-mini-transcribe`，便宜一半 |
 | `LAB_MIC` | `:0` | 终端录音设备（ffmpeg avfoundation）。用 `ffmpeg -f avfoundation -list_devices true -i ""` 查看可用设备 |
 
 ## 文件
 
-- `server.py`：本地网页服务，负责会话列表、管家接口和语音转写
-- `lab.py`：终端版管家，网页服务也复用它的会话解析和管家逻辑
-- `static/index.html`：会话视图
-- `static/projects.html`：旧版按项目手动管理的页面
+- `server.py`：本地服务，只放 HTTP 路由
+- `research_manager/`：核心逻辑（读会话、管家、提示词、录音和语音识别、设置、关注列表）
+- `lab.py`：终端命令 `lab` 的入口
+- `static/index.html`：网页界面
+- `tests/smoke.py`：冒烟测试，`python3 tests/smoke.py`
+- `desktop/`：桌面 App（Tauri）
+
+各文件的详细职责见 [CLAUDE.md](CLAUDE.md)，架构和数据格式见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。

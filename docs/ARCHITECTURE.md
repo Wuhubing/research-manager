@@ -1,6 +1,6 @@
 # 架构
 
-本文描述现在的代码（重构前）。行为规则和工作约定见仓库根目录的 [CLAUDE.md](../CLAUDE.md)。
+本文描述现在的代码（重构阶段 ② 之后：核心逻辑在 `research_manager/` 包里）。行为规则和工作约定见仓库根目录的 [CLAUDE.md](../CLAUDE.md)。
 
 ## 组件
 
@@ -14,13 +14,15 @@
                            ▼ ▼                       ▼
                  ┌──────────────────────────────────────────────┐
   终端 `lab` ──┐  │ server.py  本地 HTTP 服务 127.0.0.1:8765        │
-  （lab.py）   │  │  路由 · 关注列表 · 交接接替关系 · ⌃P 录音状态    │
-               │  └───────────────┬──────────────────────────────┘
-               │                  │ import lab
+  （lab.py →   │  │  只有路由                                      │
+   cli.py）    │  └───────────────┬──────────────────────────────┘
+               │                  │ import research_manager
                ▼                  ▼
        ┌───────────────────────────────────────────────────────────┐
-       │ lab.py  会话解析 · 动态压缩 · 上下文用量 · 录音 · 语音识别    │
-       │         设置和 key · 管家（Lab 类）· 提示词                  │
+       │ research_manager/                                          │
+       │  sessions 读会话 · 压缩动态 · 上下文用量   manager 管家 Lab   │
+       │  prompts 提示词   voice 录音 · 识别 · ⌃P   settings key 设置 │
+       │  watch 关注列表 · 接替关系   macos 剪贴板 · 通知 · Terminal  │
        └──┬──────────────┬───────────────┬──────────────┬──────────┘
           │ 只读          │ 子进程         │ HTTPS         │ 子进程
           ▼              ▼               ▼              ▼
@@ -31,8 +33,8 @@
 
 - **工作会话**：研究者自己开的 Claude Code 会话，记录在 `~/.claude/projects/<编码后的 cwd>/<会话 id>.jsonl`。本项目只读这些文件。
 - **管家**：`claude -p` 子进程，在 `<项目>/.research/` 目录里运行，靠 `--resume` 接着自己的长期会话。它自己的会话记录也在 `~/.claude/projects/` 下（cwd 以 `/.research` 结尾），列会话时会被跳过。
-- **项目目录** = 工作会话 cwd 所在的 git 根目录（`lab.git_root()`，不是 git 仓库时就用 cwd 本身）。`.research/` 放在这里。
-- **桌面 App** 打包时把 `server.py`、`lab.py`、`static/*` 复制到 `Research Manager.app/Contents/Resources/core/`（清单在 `tauri.conf.json` 的 `bundle.resources`），启动时在那里运行 `python3 server.py`（开发时用仓库根目录）。服务已经在跑就不再启动。
+- **项目目录** = 工作会话 cwd 所在的 git 根目录（`manager.git_root()`，不是 git 仓库时就用 cwd 本身）。`.research/` 放在这里。
+- **桌面 App** 打包时把 `server.py`、`lab.py`、`research_manager/*.py`、`static/*` 复制到 `Research Manager.app/Contents/Resources/core/`（清单在 `tauri.conf.json` 的 `bundle.resources`），启动时在那里运行 `python3 server.py`（开发时用仓库根目录）。服务已经在跑就不再启动。
 
 ## 数据流
 
@@ -87,13 +89,12 @@
 | GET/POST | `/api/settings` | key（只返回末 4 位）、识别模型、上下文窗口 | 网页设置 |
 | POST | `/api/quick_record/start` · `stop` · `copy` | ⌃P 录音 | 菜单栏 |
 | GET | `/api/quick_record/last` | 录音状态、最近的原话、错误 | 菜单栏 |
-| GET/POST | `/api/projects…` | 旧版项目页（计划删除） | `static/projects.html` |
 
 除 `/api/transcribe` 外，POST 只接受 `Content-Type: application/json`，防止别的网页不经预检就跨域改设置。服务只监听 127.0.0.1。
 
 ## 管家的权限边界
 
-`Lab.run_claude()` 生成的命令（`lab.py`）：
+`Lab.run_claude()` 生成的命令（`research_manager/manager.py`）：
 
 ```
 claude -p --output-format stream-json --verbose --permission-mode default
@@ -142,7 +143,6 @@ claude -p --output-format stream-json --verbose --permission-mode default
 | `watch.json` | 关注的会话 id 数组，顺序就是左栏顺序 |
 | `links.json` | `{新会话 id: 旧会话 id}`，交接产生的接替关系 |
 | `server.log` | App 启动的服务的标准输出和错误输出；请求日志只记 `/api/` 开头的 |
-| `data/projects/` | 旧版项目页的数据（App 通过 `RM_DATA_DIR` 指到这里；从仓库直接运行时是仓库的 `data/`） |
 
 ### 读取的会话记录
 
@@ -150,5 +150,5 @@ claude -p --output-format stream-json --verbose --permission-mode default
 
 ## 已知问题（计划在重构阶段 ② 处理）
 
-1. **终端版 `lab` 在项目子目录里可能找不到会话。** 从 `7634ebb` 起管家的项目目录是 git 根目录，终端版用 `list_sessions(self.project)` 只在 git 根目录对应的会话文件夹里找；在子目录里开的 Claude Code 会话记录在子目录自己的文件夹下（`~/.claude/projects/<编码后的子目录>/`），所以找不到。网页和 App 固定盯某个会话，不受影响。交接后的 `adopt_new_session()` 也按 git 根目录找，但新会话本来就在 git 根目录打开，目前是一致的。还没有实际测试确认。
-2. **提示词和说明里的权限描述过时。** `lab.py` 的 `SYSTEM` 提示词和文件开头的 docstring 说管家可以用 Read/Grep/Glob，但现在不限路径的 Read/Grep/Glob 已经不放行，只能读项目目录（不含密钥类文件）和当前这一个会话记录，见上文“管家的权限边界”。
+1. **终端版 `lab` 在项目子目录里可能找不到会话。** 从 `7634ebb` 起管家的项目目录是 git 根目录，终端版用 `list_sessions(lab.project)`（`Lab.choose_session` / `new_activity`）只在 git 根目录对应的会话文件夹里找；在子目录里开的 Claude Code 会话记录在子目录自己的文件夹下（`~/.claude/projects/<编码后的子目录>/`），所以找不到。网页和 App 固定盯某个会话，不受影响。交接后的 `adopt_new_session()` 也按 git 根目录找，但新会话本来就在 git 根目录打开，目前是一致的。还没有实际测试确认。
+2. **提示词和说明里的权限描述过时。** `research_manager/prompts.py` 的 `SYSTEM` 提示词和 `lab.py` 开头的 docstring 说管家可以用 Read/Grep/Glob，但现在不限路径的 Read/Grep/Glob 已经不放行，只能读项目目录（不含密钥类文件）和当前这一个会话记录，见上文“管家的权限边界”。
