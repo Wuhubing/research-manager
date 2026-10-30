@@ -8,10 +8,12 @@
 
 只依赖 Python 标准库；LLM 调用走本机的 `claude -p`（用你的 Claude 订阅）。
 """
+import atexit
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -215,6 +217,47 @@ def settings_view():
             "context_windows": lab.CONTEXT_WINDOWS}
 
 
+# ---------------------------------------------------------------- 菜单栏录音（⌃P）
+
+# 最近一次录音：识别出的原话（自动复制）
+QUICK = {"state": "idle", "proc": None, "wav": None, "text": "", "error": ""}
+
+
+def quick_record(action, req):
+    if action == "start":
+        if QUICK["state"] == "recording":
+            return {"error": "已经在录音"}
+        try:
+            QUICK["proc"], QUICK["wav"] = lab.start_recording()
+        except Exception as ex:
+            QUICK.update(state="idle", text="", error=str(ex))
+            return {"error": str(ex)}
+        QUICK.update(state="recording", error="")
+        return {"state": "recording"}
+    if action == "stop":
+        if QUICK["state"] != "recording":
+            return {"error": "没有在录音"}
+        QUICK["state"] = "transcribing"
+        try:
+            wav = lab.stop_recording(QUICK["proc"], QUICK["wav"])
+            text = lab.transcribe(wav).strip()
+            os.unlink(wav)
+            if not text:
+                raise RuntimeError("没听清，再说一次")
+        except Exception as ex:
+            QUICK.update(state="idle", error=str(ex))
+            notify("录音失败", str(ex))
+            return {"error": str(ex)}
+        lab.copy_to_clipboard(text)
+        QUICK.update(state="idle", text=text, error="")
+        return {"state": "idle", "text": text}
+    # copy：再复制一次最近的原话
+    if not QUICK["text"]:
+        return {"error": "还没有内容"}
+    lab.copy_to_clipboard(QUICK["text"])
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------- 语音
 
 AUDIO_EXT = {"audio/webm": ".webm", "audio/mp4": ".mp4", "audio/mpeg": ".mp3", "audio/wav": ".wav",
@@ -352,6 +395,8 @@ class Handler(SimpleHTTPRequestHandler):
                                        "claude": bool(shutil.which("claude"))})
             if self.path == "/api/settings":
                 return self.send_json(settings_view())
+            if self.path == "/api/quick_record/last":
+                return self.send_json({k: QUICK[k] for k in ("state", "text", "error")})
         except Exception as ex:
             return self.send_json({"error": str(ex)}, 400)
         return super().do_GET()
@@ -381,6 +426,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if req.get("context_window") in lab.CONTEXT_WINDOWS:
                     lab.save_settings(context_window=req["context_window"])
                 return self.send_json(settings_view())
+            m = re.fullmatch(r"/api/quick_record/(start|stop|copy)", self.path)
+            if m:
+                return self.send_json(quick_record(m.group(1), req))
             if self.path == "/api/watch":
                 save_watch(req.get("ids", []))
                 return self.send_json(load_watch())
@@ -456,6 +504,23 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"error": str(ex)}, 500)
 
 
+def stop_quick_recording(*_):
+    """服务退出时停掉正在进行的录音，避免 ffmpeg 留在后台一直占着麦克风。"""
+    p = QUICK.get("proc")
+    if p and p.poll() is None:
+        p.kill()
+    if QUICK.get("wav"):
+        Path(QUICK["wav"]).unlink(missing_ok=True)
+
+
+def on_sigterm(*_):
+    stop_quick_recording()
+    raise SystemExit(0)
+
+
 if __name__ == "__main__":
+    lab.kill_stale_recordings()
+    atexit.register(stop_quick_recording)
+    signal.signal(signal.SIGTERM, on_sigterm)
     print(f"科研管理器运行在 http://localhost:{PORT}")
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

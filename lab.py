@@ -108,7 +108,26 @@ def sessions_dir(project):
     return Path.home() / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(project))
 
 
+_FILE_CACHE = {}
+
+
+def _cached(kind, path, compute):
+    """文件没变（修改时间、大小相同）就复用上次的结果。会话文件可能有几十 MB，每次重读很慢。"""
+    st = Path(path).stat()
+    key = (kind, str(path))
+    hit = _FILE_CACHE.get(key)
+    if hit and hit[0] == (st.st_mtime, st.st_size):
+        return hit[1]
+    value = compute()
+    _FILE_CACHE[key] = ((st.st_mtime, st.st_size), value)
+    return value
+
+
 def session_title(path):
+    return _cached("title", path, lambda: _session_title(path))
+
+
+def _session_title(path):
     title, first = None, None
     try:
         with open(path) as f:
@@ -191,24 +210,49 @@ def condense(path, offset, budget=40000):
 
 # ---------------------------------------------------------------- 录音 / 识别
 
-def record():
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+REC_PREFIX = "rm-rec-"     # 录音临时文件名前缀，用来找出残留的录音进程
+REC_MAX_SECONDS = 600      # 单次录音最长 10 分钟；就算启动它的进程意外退出，ffmpeg 也会自己停
+
+
+def start_recording():
+    """后台开始录音，返回 (进程, wav 路径)。终端版和菜单栏录音共用。"""
+    with tempfile.NamedTemporaryFile(prefix=REC_PREFIX, suffix=".wav", delete=False) as tmp:
         wav = tmp.name
     p = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "avfoundation", "-i", MIC,
-                          "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav],
+                          "-t", str(REC_MAX_SECONDS), "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav],
                          stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-    t0 = time.time()
-    try:
-        input(f"{RED}● 录音中…{RESET} 说完按回车结束 ")
-    except (KeyboardInterrupt, EOFError):
-        pass
+    time.sleep(0.3)
+    if p.poll() is not None:
+        raise RuntimeError("录音启动失败：" + p.stderr.read().decode("utf-8", "ignore")[-300:])
+    return p, wav
+
+
+def kill_stale_recordings():
+    """停掉上次残留的录音进程（比如服务被强制结束时没来得及停的），并删掉它们的临时文件。"""
+    subprocess.run(["pkill", "-f", f"avfoundation.*{REC_PREFIX}"], capture_output=True)
+    for f in Path(tempfile.gettempdir()).glob(f"{REC_PREFIX}*.wav"):
+        f.unlink(missing_ok=True)
+
+
+def stop_recording(p, wav):
     try:
         p.communicate(b"q", timeout=5)
     except subprocess.TimeoutExpired:
         p.kill()
     if p.returncode not in (0, 255) or not Path(wav).exists() or Path(wav).stat().st_size < 2000:
-        err = (p.stderr.read().decode() if p.stderr and not p.stderr.closed else "")
-        raise RuntimeError("录音失败。请在「系统设置 → 隐私与安全性 → 麦克风」里允许你的终端 App。" + err[-300:])
+        err = (p.stderr.read().decode("utf-8", "ignore") if p.stderr and not p.stderr.closed else "")
+        raise RuntimeError("录音失败。请在「系统设置 → 隐私与安全性 → 麦克风」里允许录音的 App。" + err[-300:])
+    return wav
+
+
+def record():
+    p, wav = start_recording()
+    t0 = time.time()
+    try:
+        input(f"{RED}● 录音中…{RESET} 说完按回车结束 ")
+    except (KeyboardInterrupt, EOFError):
+        pass
+    stop_recording(p, wav)
     print(f"{DIM}  录了 {time.time() - t0:.0f}s，识别中…{RESET}")
     return wav
 
@@ -460,7 +504,7 @@ class Lab:
         mainline, shown, prompt = parse_reply(reply)
         print("\n" + colorize(shown) + "\n")
         if prompt:
-            subprocess.run("pbcopy", input=prompt, text=True)
+            copy_to_clipboard(prompt)
             print(f"{GREEN}✓ prompt 已复制到剪贴板，粘贴给工作 agent 即可{RESET}")
         if mainline:
             print(f"{CYAN}管家建议更新主线：{RESET}\n{mainline}\n")
@@ -476,7 +520,7 @@ class Lab:
             print(f"{DIM}  读完整个会话、整理交接文档，约 1–2 分钟…{RESET}")
         h = self.handoff(force)
         print("\n" + colorize(re.sub(r"```prompt.*?```", "", h["doc"], flags=re.S)) + "\n")
-        subprocess.run("pbcopy", input=h["prompt"], text=True)
+        copy_to_clipboard(h["prompt"])
         print(f"{GREEN}✓ 交接文档已保存：{h['path']}，新会话的第一条消息已复制到剪贴板{RESET}")
         if input("在 Terminal 里新开一个 claude 会话？[y/N] ").strip().lower() == "y":
             open_terminal_session(self.project, Path(h["path"]).with_suffix(".prompt.txt"))
@@ -563,6 +607,10 @@ def context_window(tokens=0):
 
 
 def context_usage(path):
+    return _cached("context", path, lambda: _context_usage(path))
+
+
+def _context_usage(path):
     """从会话记录末尾找最近一轮主对话的 token 用量，估算当前上下文大小。"""
     with open(path, "rb") as f:
         f.seek(max(0, path.stat().st_size - 2_000_000))
@@ -591,6 +639,13 @@ def open_terminal_session(cwd, prompt_file):
     script = shell.replace("\\", "\\\\").replace('"', '\\"')
     subprocess.run(["osascript", "-e", f'tell application "Terminal" to do script "{script}"',
                     "-e", 'tell application "Terminal" to activate'], check=True, capture_output=True)
+
+
+def copy_to_clipboard(text):
+    """写入系统剪贴板。pbcopy 按 __CF_USER_TEXT_ENCODING 决定编码，从 App 启动的服务里没有它，
+    中文会变成问号，所以明确指定 UTF-8（0x08000100）。"""
+    env = {**os.environ, "LANG": "en_US.UTF-8", "__CF_USER_TEXT_ENCODING": f"{os.getuid():#x}:0x08000100:0x08000100"}
+    subprocess.run("pbcopy", input=text.encode("utf-8"), env=env)
 
 
 def all_sessions(days=60, limit=400):
