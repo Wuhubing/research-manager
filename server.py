@@ -351,7 +351,7 @@ class Handler(SimpleHTTPRequestHandler):
                     mgr.mainline_file.write_text(req["text"].strip() + "\n")
                     return self.send_json({"ok": True})
                 said = req.get("said", "").strip()
-                reply = mgr.ask(said)
+                reply = mgr.ask(said, want_prompt=bool(said) and req.get("want_prompt", True))
                 mgr.log(said, reply)
                 mainline, shown, prompt = lab.parse_reply(reply)
                 return self.send_json({"reply": shown, "prompt": prompt, "mainline": mainline,

@@ -211,7 +211,7 @@ dialog#settings { width: min(440px, calc(100vw - 32px)); padding: 0; border: 0; 
         <textarea id="said" rows="1" placeholder="问点什么，或点左边说话…"></textarea>
       </div>
       <div class="cfoot">
-        <span class="status" id="micst">回车发送 · Shift+回车换行</span>
+        <span class="status" id="micst">说完自动发送 · 每次都会附一条 prompt</span>
         <span style="display:flex;gap:6px">
           <button class="pill g" onclick="ask(true)" id="sumbtn">只归纳</button>
           <button class="pill o" onclick="ask()" id="sendbtn">发送</button>
@@ -456,7 +456,7 @@ async function ask(summaryOnly) {
   $("#mgrbody").scrollTop = $("#mgrbody").scrollHeight;
   const tick = setInterval(() => { const e = $("#thinking"); if (e) e.textContent = `管家正在看会话、核实文件… ${((Date.now() - t0) / 1000) | 0}s`; }, 1000);
   try {
-    const r = await api(`/api/sessions/${id}/ask`, { said });
+    const r = await api(`/api/sessions/${id}/ask`, { said, want_prompt: !summaryOnly });
     if (!summaryOnly) { $("#said").value = ""; $("#said").style.height = "auto"; }
     if (CUR && CUR.id === id) {
       CUR.history.push({ ...r, session: id, session_title: CUR.title });
@@ -524,8 +524,10 @@ function setupMic() {
       try {
         const r = await fetch("/api/transcribe", { method: "POST", body: new Blob(chunks, { type: chunks[0]?.type || "audio/webm" }) });
         const j = await r.json(); if (j.error) throw new Error(j.error);
-        const t = $("#said"); t.value = (t.value ? t.value + " " : "") + j.text; t.focus(); t.oninput();
-        st.textContent = "识别完成，回车发送";
+        const t = $("#said"); t.value = (t.value ? t.value + " " : "") + j.text; t.oninput();
+        // 说完直接发给管家，默认会带一条 prompt 回来
+        st.textContent = "识别完成，已发给管家";
+        ask();
       } catch (e) { st.textContent = "识别失败：" + e.message; }
       btn.disabled = false;
     };

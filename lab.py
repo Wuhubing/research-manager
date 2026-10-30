@@ -315,11 +315,16 @@ class Lab:
         text, offsets[self.work.stem] = condense(self.work, start)
         return text or "（自上次以来没有新动态）"
 
-    def ask(self, said):
+    def ask(self, said, want_prompt=False):
         activity = self.new_activity()
         msg = (f"# 研究主线\n{self.mainline()}\n\n"
                f"# 工作 agent 会话的新动态（会话：{session_title(self.work) if self.work else '无'}）\n{activity}\n\n"
                f"# 研究者这次说的话\n{said or '（研究者没说话，只想要一次归纳）'}")
+        if want_prompt:
+            msg += ("\n\n# 这次必须输出 Prompt\n"
+                    "不管研究者是在派任务、聊想法还是问情况，回复最后都要有 ## Prompt 和 ```prompt 代码块，"
+                    "把他的意思整理成一条能直接发给工作 agent 的 prompt。"
+                    "如果他只是问情况，就写一条让 agent 去核实并汇报这件事的 prompt。")
         cmd = ["claude", "-p", "--output-format", "stream-json", "--verbose",
                "--permission-mode", "default",
                "--tools", "Read,Grep,Glob,Bash",
@@ -375,7 +380,7 @@ class Lab:
                     f"**我说**：{said or '（只要归纳）'}\n\n{reply}\n")
 
     def handle(self, said):
-        reply = self.ask(said)
+        reply = self.ask(said, want_prompt=bool(said))
         self.log(said, reply)
         mainline, shown, prompt = parse_reply(reply)
         print("\n" + colorize(shown) + "\n")
