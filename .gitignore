@@ -5,3 +5,9 @@ __pycache__/
 data/
 # 管家在研究项目里生成的记录
 .research/
+# 桌面版构建产物
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+# 设计稿（本地查看，不提交）
+design/ui-deck.html

@@ -15,7 +15,7 @@ research-manager 的做法是：你用语音说话，一个只读的 Claude CLI 
 - **下一步建议**
 - **Prompt**：你想派任务时，它会写一条带范围边界的 prompt，并自动复制到剪贴板
 
-语音识别用本地的 [whisper.cpp](https://github.com/ggml-org/whisper.cpp)，不上传音频。LLM 调用走本机的 `claude -p`，用你的 Claude 订阅，不需要 API key。只依赖 Python 标准库。
+语音识别用 OpenAI 的 `gpt-4o-transcribe`，中英混说也准，约 0.006 美元/分钟。管家走本机的 `claude -p`，用你的 Claude 订阅。只依赖 Python 标准库。
 
 ## 安装
 
@@ -28,11 +28,40 @@ cd research-manager
 ```
 
 `install.sh` 会做这些事：
-- 安装 `whisper-cpp` 和 `ffmpeg`
-- 下载 `large-v3-turbo` 量化模型（约 550MB），放到 `~/.research-manager/models/`
+- 安装 `ffmpeg`（终端录音用）
 - 把 `lab` 命令链接到 `~/.local/bin`
 
+### 配置 OpenAI API key（语音识别）
+
+1. 在 [platform.openai.com/api-keys](https://platform.openai.com/api-keys) 创建一个 key，并在 Billing 里充值（最低 5 美元）。
+2. 把 key 存进本机文件，只有你自己能读：
+
+```bash
+mkdir -p ~/.research-manager && pbpaste > ~/.research-manager/openai_key && chmod 600 ~/.research-manager/openai_key
+```
+
+（先复制 key，再运行这条命令。）不需要重启，下次录音就会生效。
+
 ## 使用
+
+### 桌面版（macOS）
+
+需要先装好 Rust（[rustup](https://rustup.rs)）和 Node.js。
+
+```bash
+cd desktop
+npm install
+npx tauri build
+open "src-tauri/target/release/bundle/macos/Research Manager.app"
+```
+
+桌面版是一个 [Tauri 2](https://tauri.app) 外壳，启动时会在后台拉起本地服务 `server.py`。服务日志在 `~/.research-manager/server.log`。
+
+- **菜单栏图标**：列出你关注的会话。● 表示最近 3 分钟有活动，○ 表示空闲。点一下会打开对应会话。
+- **关闭窗口**：只是隐藏，App 仍留在菜单栏。要彻底退出，用菜单栏里的「退出」。
+- **麦克风**：第一次录音时 macOS 会请求权限，点允许即可。
+
+可以把打包好的 `Research Manager.app` 拖进「应用程序」文件夹。
 
 ### 网页版
 
@@ -42,7 +71,7 @@ cd research-manager
 
 用 Chrome 或 Safari 打开 http://localhost:8765。Claude 桌面版的内置浏览器不支持麦克风，所以不能在那里用语音。
 
-- **左栏**：最近 14 天的所有 Claude Code 会话，按项目分组。最近 3 分钟有活动的会话会亮绿点。
+- **左栏**：你关注的会话，一开始是空的。点「＋ 添加会话」，从最近 60 天的所有 Claude Code 会话里勾选想让管家盯的，支持搜索，按项目分组。最近 3 分钟有活动的会话会亮绿点；鼠标悬停时点 × 可以移除。列表保存在 `~/.research-manager/watch.json`。
 - **中栏**：选中会话里 agent 的动作记录。改文件的操作标橙色，报错标红色。
 - **右栏**：管家。点 🎙 说话，或直接打字。点“只归纳”可以快速看一次进展。
 
@@ -80,7 +109,8 @@ lab
 | --- | --- | --- |
 | `RM_PORT` | `8765` | 网页端口 |
 | `RM_CLAUDE_MODEL` / `LAB_CLAUDE_MODEL` | Claude 默认模型 | 例如 `sonnet`，速度更快 |
-| `RM_WHISPER_MODEL` / `LAB_WHISPER_MODEL` | `~/.research-manager/models/ggml-large-v3-turbo-q5_0.bin` | Whisper 模型路径 |
+| `OPENAI_API_KEY` | 读 `~/.research-manager/openai_key` | 语音识别用的 OpenAI key |
+| `LAB_OPENAI_ASR_MODEL` | `gpt-4o-transcribe` | 可改成 `gpt-4o-mini-transcribe`，便宜一半 |
 | `LAB_MIC` | `:0` | 终端录音设备（ffmpeg avfoundation）。用 `ffmpeg -f avfoundation -list_devices true -i ""` 查看可用设备 |
 
 ## 文件
