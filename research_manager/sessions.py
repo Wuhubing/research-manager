@@ -53,6 +53,24 @@ def list_sessions(project, exclude=()):
     return sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
 
 
+def project_sessions(project, exclude=()):
+    """项目根目录和它所有子目录里的会话，最新的在前（终端版 lab 用）。
+    在子目录里开的会话记在子目录自己的文件夹下，只看根目录的文件夹会漏掉。
+    文件夹名是把路径里的非字母数字换成 -，会和别的项目撞前缀（proj-old），所以按会话记录里的 cwd 再确认一次；
+    管家自己的会话（cwd 在 .research 里）不算。"""
+    root = Path(project).resolve()
+    prefix = sessions_dir(root).name
+    files = list_sessions(root, exclude)
+    base = Path.home() / ".claude/projects"
+    for d in base.glob(prefix + "-*") if base.exists() else []:
+        for f in d.glob("*.jsonl"):
+            cwd = f.stem not in exclude and session_cwd(f)
+            if cwd and Path(cwd).resolve().is_relative_to(root) \
+                    and not Path(cwd).resolve().is_relative_to(root / ".research"):
+                files.append(f)
+    return sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
+
+
 def clip(s, n):
     s = str(s).strip()
     return s if len(s) <= n else s[:n] + "…"

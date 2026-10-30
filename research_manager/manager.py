@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from .prompts import HANDOFF_SYSTEM, MAINLINE_TEMPLATE, SYSTEM
-from .sessions import clip, condense, context_usage, find_session, list_sessions, session_cwd, session_title
+from .sessions import clip, condense, context_usage, find_session, project_sessions, session_cwd, session_title
 from .watch import load_links
 
 
@@ -54,7 +54,7 @@ class Lab:
         self.state_file.write_text(json.dumps(self.state, ensure_ascii=False, indent=1))
 
     def choose_session(self, pick):
-        files = list_sessions(self.project, exclude={self.state.get("manager_session")})
+        files = project_sessions(self.project, exclude={self.state.get("manager_session")})
         if not files:
             self.work = None
             print(f"{YELLOW}这个目录下还没有 Claude Code 会话记录。在这里开一个 claude 会话干活后，管家就能看到它。{RESET}")
@@ -85,7 +85,7 @@ class Lab:
         if not self.work:
             return "（没有工作会话）"
         # 如果出现了更新的会话，自动跟过去
-        latest = [] if self.pinned else list_sessions(self.project, exclude={self.state.get("manager_session")})
+        latest = [] if self.pinned else project_sessions(self.project, exclude={self.state.get("manager_session")})
         if latest and latest[0] != self.work:
             self.work = latest[0]
             print(f"{DIM}  切换到最新的工作会话：{session_title(self.work)}{RESET}")
