@@ -31,7 +31,9 @@ CLAUDE_MODEL = os.environ.get("LAB_CLAUDE_MODEL", "")
 
 DIM, BOLD, RED, GREEN, YELLOW, CYAN, RESET = "\033[2m", "\033[1m", "\033[31m", "\033[32m", "\033[33m", "\033[36m", "\033[0m"
 
-ALLOWED_TOOLS = ["Read", "Grep", "Glob", "Bash(git status:*)", "Bash(git diff:*)",
+# 不放行不限路径的 Read/Grep/Glob（那等于能读本机所有文件）。项目目录靠 --add-dir 可读，
+# 当前工作会话的记录在 run_claude() 里按单个文件放行。
+ALLOWED_TOOLS = ["Bash(git status:*)", "Bash(git diff:*)",
                  "Bash(git log:*)", "Bash(git show:*)", "Bash(ls:*)"]
 
 SYSTEM = """你是研究者的“科研管家”，长期陪伴同一个研究项目。研究者通过语音和你说话（语音识别可能有错字，请按上下文纠正）。
@@ -442,7 +444,8 @@ class Lab:
                "--allowedTools", *ALLOWED_TOOLS,
                "--add-dir", str(self.project)]
         if self.work:
-            cmd += ["--add-dir", str(self.work.parent)]   # 让管家需要时能只读查看工作会话的原始记录
+            # 只放行当前这一个会话记录（// 开头表示绝对路径），同一文件夹里的其他会话和子 agent 记录都读不到
+            cmd += ["--allowedTools", f"Read(/{self.work})", f"Grep(/{self.work})"]
         if CLAUDE_MODEL:
             cmd += ["--model", CLAUDE_MODEL]
         if resume and self.state.get("manager_session"):
