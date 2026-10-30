@@ -112,10 +112,13 @@ def transcribe_upload(audio_bytes, content_type="", hint=""):
         src = Path(td) / f"audio{ext}"
         src.write_bytes(audio_bytes)
         # 浏览器报的类型不可靠（类型为空时会按 .webm 发出去，而 WebKit 录的其实是 mp4，OpenAI 就报 400“文件损坏”），
-        # 先让 ffmpeg 按实际内容转成 16kHz 单声道 flac 再识别；没装 ffmpeg 才照原样发
+        # 先让 ffmpeg 按实际内容转成 16kHz 单声道 flac 再识别；没装 ffmpeg 才照原样发。
+        # 网页录音关掉了自动增益，离麦克风远时声音偏小，用 dynaudnorm 把音量拉到一致。
+        # 默认窗口约 15 秒，几秒的录音几乎不放大，所以缩短成 100ms × 5 帧
         flac = Path(td) / "audio.flac"
         try:
-            r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-ar", "16000", "-ac", "1", str(flac)],
+            r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-af", "dynaudnorm=f=100:g=5",
+                                "-ar", "16000", "-ac", "1", str(flac)],
                                capture_output=True, text=True, timeout=120)
         except FileNotFoundError:
             return transcribe(src, hint)

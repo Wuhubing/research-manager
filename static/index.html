@@ -675,10 +675,13 @@ async function checkStatus() {
 // ---------- 录音 ----------
 // 默认用 Mac 自带的麦克风：连着 iPhone 时系统可能给 iPhone 的麦克风（连续互通），录出来的文件容易不完整。
 // 第一次授权前拿不到设备名，就先用默认设备打开，授权后再找一次自带麦克风。
+// 关掉回声消除、降噪和自动增益：开着时 WebKit 会启用系统的语音处理，录音期间把其他 App 的声音压低，
+// 还要连带启动默认输出设备，输出设备出问题时录音也会失败。音量差异由服务器转码时统一（dynaudnorm）。
+const MIC_RAW = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
 async function micStream() {
   const builtin = async () => (await navigator.mediaDevices.enumerateDevices())
     .find(d => d.kind === "audioinput" && /MacBook|Built-in|内建/i.test(d.label));
-  const open = d => navigator.mediaDevices.getUserMedia({ audio: d ? { deviceId: { exact: d.deviceId } } : true });
+  const open = d => navigator.mediaDevices.getUserMedia({ audio: d ? { ...MIC_RAW, deviceId: { exact: d.deviceId } } : MIC_RAW });
   let dev = await builtin();
   if (dev) return open(dev);
   const stream = await open(null);
