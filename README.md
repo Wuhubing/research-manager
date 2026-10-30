@@ -2,6 +2,8 @@
 
 科研时给 Claude Code 配的一个“管家”。
 
+![主窗口：左边是关注的会话，中间是 agent 的动作记录，右边是管家的归纳](docs/screenshots/main.png)
+
 用 agent 做科研，常见的两个问题是：
 
 1. **agent 过度发挥。** 它会做没要求的事、改范围外的文件、悄悄换方法，你最后不知道到底发生了什么。
@@ -16,6 +18,12 @@ research-manager 的做法是：你用语音说话，一个只读的 Claude CLI 
 - **Prompt**：你想派任务时，它会写一条带范围边界的 prompt，并自动复制到剪贴板
 
 语音识别用 OpenAI 的 `gpt-4o-transcribe`，中英混说也准，约 0.006 美元/分钟。管家走本机的 `claude -p`，用你的 Claude 订阅。只依赖 Python 标准库。
+
+| 添加要盯的会话 | 上下文快满时一键交接 |
+| --- | --- |
+| ![从所有 Claude Code 会话里勾选要关注的](docs/screenshots/picker.png) | ![交接文档：已完成、关键决定、不要做的事、下一步](docs/screenshots/handoff.png) |
+
+<sub>截图使用的是虚构的演示数据。</sub>
 
 ## 安装
 
