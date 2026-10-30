@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+# 本地数据（旧版项目页）
+data/
+# 管家在研究项目里生成的记录
+.research/

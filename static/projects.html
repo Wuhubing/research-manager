@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>科研管理器</title>
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a65; --line: #e3e1da;
+  --accent: #2f5d50; --accent-ink: #fff; --soft: #eef2ef;
+  --main: #2f7d4f; --branch: #b07a12; --drift: #b23a3a; --rec: #d13b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161715; --panel: #1f201e; --ink: #ecebe6; --muted: #9a9890; --line: #33342f;
+    --accent: #7fbfa8; --accent-ink: #10201a; --soft: #24302b;
+    --main: #6fcf97; --branch: #e2b450; --drift: #ef7a7a;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+.app { display: grid; grid-template-columns: 230px 1fr; min-height: 100vh; }
+aside { border-right: 1px solid var(--line); padding: 18px 14px; background: var(--panel); }
+aside h1 { font-size: 16px; margin: 0 0 14px; letter-spacing: .02em; }
+.proj { display: block; width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px;
+  border: 0; background: none; color: var(--ink); cursor: pointer; font: inherit; }
+.proj:hover { background: var(--soft); }
+.proj.active { background: var(--soft); font-weight: 600; }
+main { padding: 22px 32px 60px; max-width: 980px; }
+button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); padding: 7px 14px; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+button.small { padding: 3px 9px; font-size: 13px; }
+textarea, input { width: 100%; font: inherit; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+textarea { resize: vertical; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 6px 0 16px; }
+.tab { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 14px; color: var(--muted); }
+.tab.active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.mic { width: 64px; height: 64px; border-radius: 50%; font-size: 26px; border: 2px solid var(--line); display: grid; place-items: center; padding: 0; }
+.mic.recording { background: var(--rec); border-color: var(--rec); color: #fff; animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--rec) 20%, transparent); } }
+.status { color: var(--muted); font-size: 13px; }
+.badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid currentColor; }
+.b-mainline { color: var(--main); } .b-branch { color: var(--branch); } .b-drift { color: var(--drift); } .b-prompt, .b-note { color: var(--muted); }
+.entry { border-left: 3px solid var(--line); padding: 4px 0 4px 14px; margin: 0 0 18px; }
+.entry.mainline { border-color: var(--main); } .entry.branch { border-color: var(--branch); } .entry.drift { border-color: var(--drift); }
+.entry h3 { font-size: 15px; margin: 2px 0 4px; }
+.entry .meta { font-size: 12px; color: var(--muted); }
+.entry ul { margin: 2px 0 6px; padding-left: 20px; }
+.warn { background: color-mix(in srgb, var(--drift) 10%, transparent); border-radius: 8px; padding: 8px 12px; margin: 6px 0; }
+.warn b { color: var(--drift); }
+.sec { font-size: 13px; color: var(--muted); margin-top: 6px; }
+pre { white-space: pre-wrap; background: var(--bg); padding: 10px; border-radius: 8px; font-size: 13px; max-height: 300px; overflow: auto; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.empty { color: var(--muted); padding: 40px 0; text-align: center; }
+.hidden { display: none !important; }
+@media (max-width: 720px) {
+  .app { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; } .grid2 { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>🔬 科研管理器</h1><a href="/" class="status" style="display:block;margin:-8px 0 12px">← 回到会话视图</a>
+    <div id="projects"></div>
+    <button style="margin-top:10px;width:100%" onclick="createProject()">＋ 新项目</button>
+    <p class="status" id="sys" style="margin-top:18px"></p>
+  </aside>
+
+  <main id="main">
+    <div class="empty">左侧新建或选择一个项目</div>
+  </main>
+</div>
+
+<template id="tpl-project">
+  <div class="row" style="justify-content:space-between">
+    <input id="pname" style="font-size:20px;font-weight:600;border:0;background:none;padding:4px 0;width:auto;flex:1">
+    <a id="export" class="status" target="_blank">导出日志 .md</a>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <b>研究主线</b><span class="status">agent 写 prompt 和做归纳时都会参照这里</span>
+    </div>
+    <div class="grid2">
+      <div><label>核心问题</label><textarea rows="2" data-m="question" placeholder="这个项目到底要回答什么问题？"></textarea></div>
+      <div><label>当前假设</label><textarea rows="2" data-m="hypotheses" placeholder="我目前相信什么？"></textarea></div>
+      <div><label>当前焦点</label><textarea rows="2" data-m="focus" placeholder="这周/这阶段在推进哪一步？"></textarea></div>
+      <div><label>明确不做的事</label><textarea rows="2" data-m="out_of_scope" placeholder="agent 不许碰的东西，例如：不改评测脚本、不换数据集"></textarea></div>
+    </div>
+    <div class="row" style="margin-top:10px"><button onclick="saveMainline()">保存主线</button><span class="status" id="mlstatus"></span></div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="t-prompt">① 说任务 → Prompt</button>
+    <button class="tab" data-tab="t-digest">② 跑完后归纳</button>
+    <button class="tab" data-tab="t-timeline">③ 时间线</button>
+  </div>
+
+  <!-- ① 语音 → prompt -->
+  <section id="t-prompt">
+    <div class="card">
+      <div class="row" style="gap:16px">
+        <button class="mic" id="mic1" title="开始/停止录音">🎙</button>
+        <div style="flex:1">
+          <b>说出你想让 agent 做什么</b>
+          <div class="status" id="mic1s">点麦克风开始说话，再点一次结束。随便说，乱一点没关系。</div>
+        </div>
+      </div>
+      <label style="margin-top:12px">口述内容（可以直接改字，也可以多录几段接在后面）</label>
+      <textarea id="transcript" rows="4"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="gen" onclick="draftPrompt()">生成 Prompt</button>
+        <span class="status" id="genstatus"></span>
+      </div>
+    </div>
+
+    <div class="card hidden" id="draft">
+      <div class="row" style="justify-content:space-between"><b id="dtitle"></b><span class="status">可以直接编辑</span></div>
+      <div id="dquestions"></div>
+      <textarea id="dprompt" rows="16" style="margin-top:8px;font-size:14px"></textarea>
+      <div id="dassump"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" onclick="savePrompt()">复制并记录</button>
+        <button class="mic" id="mic2" style="width:38px;height:38px;font-size:16px" title="语音提修改意见">🎙</button>
+        <span class="status" id="mic2s">不满意？点麦克风说修改意见</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ② 归纳 -->
+  <section id="t-digest" class="hidden">
+    <div class="card">
+      <label>这次对应的是哪条任务？（用于检查 agent 有没有越界）</label>
+      <select id="linkprompt" style="width:100%;padding:7px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit"></select>
+      <label style="margin-top:12px">把 agent 的最终输出 / 汇报 / 日志 / 实验结果粘贴到这里</label>
+      <textarea id="output" rows="10" placeholder="直接粘贴 Claude Code 最后的回复、终端输出、metrics……"></textarea>
+      <label style="margin-top:12px">你自己的看法（可选，可语音）</label>
+      <div class="row" style="flex-wrap:nowrap">
+        <textarea id="note" rows="2" style="flex:1"></textarea>
+        <button class="mic" id="mic3" style="width:42px;height:42px;font-size:17px;flex:none">🎙</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="digbtn" onclick="digest()">归纳</button>
+        <span class="status" id="digstatus"></span>
+      </div>
+    </div>
+    <div id="digresult"></div>
+  </section>
+
+  <!-- ③ 时间线 -->
+  <section id="t-timeline" class="hidden">
+    <div class="card">
+      <div class="row" style="flex-wrap:nowrap">
+        <textarea id="quicknote" rows="2" placeholder="随手记一条想法 / 发现" style="flex:1"></textarea>
+        <button class="mic" id="mic4" style="width:42px;height:42px;font-size:17px;flex:none">🎙</button>
+        <button onclick="addNote()">记下</button>
+      </div>
+    </div>
+    <div class="row" style="margin-bottom:12px" id="filters">
+      <button class="small" data-f="all">全部</button>
+      <button class="small" data-f="mainline">主线推进</button>
+      <button class="small" data-f="branch">支线</button>
+      <button class="small" data-f="drift">偏离</button>
+      <button class="small" data-f="prompt">下达的任务</button>
+      <button class="small" data-f="note">笔记</button>
+    </div>
+    <div id="timeline"></div>
+  </section>
+</template>
+
+<script>
+const REL = { mainline: "主线推进", branch: "支线", drift: "偏离主线" };
+let P = null, filter = "all", lastDraft = null;
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = t => new Date(t * 1000).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json();
+  if (j && j.error) throw new Error(j.error);
+  return j;
+}
+
+async function loadList() {
+  const list = await api("/api/projects");
+  $("#projects").innerHTML = list.map(p =>
+    `<button class="proj ${P && P.id === p.id ? "active" : ""}" onclick="openProject('${p.id}')">${esc(p.name)}</button>`).join("")
+    || `<p class="status">还没有项目</p>`;
+  return list;
+}
+
+async function createProject() {
+  const name = prompt("项目名称？");
+  if (!name) return;
+  const p = await api("/api/projects", { name });
+  await openProject(p.id);
+}
+
+async function openProject(id) {
+  P = await api("/api/projects/" + id);
+  try { localStorage.setItem("rm-last", id); } catch {}
+  const main = $("#main");
+  main.innerHTML = "";
+  main.append($("#tpl-project").content.cloneNode(true));
+  $("#pname").value = P.name;
+  $("#pname").onchange = saveMainline;
+  $("#export").href = `/api/projects/${P.id}/log.md`;
+  document.querySelectorAll("[data-m]").forEach(t => t.value = P.mainline[t.dataset.m] || "");
+  document.querySelectorAll(".tab").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  document.querySelectorAll("#filters button").forEach(b => b.onclick = () => { filter = b.dataset.f; renderTimeline(); });
+  setupMic("#mic1", "#mic1s", text => { const t = $("#transcript"); t.value = (t.value ? t.value + "\n" : "") + text; });
+  setupMic("#mic2", "#mic2s", text => revisePrompt(text));
+  setupMic("#mic3", null, text => { const t = $("#note"); t.value = (t.value ? t.value + " " : "") + text; });
+  setupMic("#mic4", null, text => { const t = $("#quicknote"); t.value = (t.value ? t.value + " " : "") + text; });
+  refresh();
+  loadList();
+}
+
+function showTab(id) {
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
+  ["t-prompt", "t-digest", "t-timeline"].forEach(s => $("#" + s).classList.toggle("hidden", s !== id));
+}
+
+function refresh() {
+  const prompts = P.entries.filter(e => e.type === "prompt");
+  $("#linkprompt").innerHTML = `<option value="">（不关联，直接归纳）</option>` +
+    prompts.map((e, i) => `<option value="${e.id}" ${i === 0 ? "selected" : ""}>${fmt(e.time)} · ${esc(e.title || e.transcript.slice(0, 30))}</option>`).join("");
+  renderTimeline();
+}
+
+async function saveMainline() {
+  const body = { name: $("#pname").value.trim() };
+  document.querySelectorAll("[data-m]").forEach(t => body[t.dataset.m] = t.value.trim());
+  P = await api(`/api/projects/${P.id}/mainline`, body);
+  $("#mlstatus").textContent = "已保存 ✓";
+  setTimeout(() => $("#mlstatus") && ($("#mlstatus").textContent = ""), 1500);
+  loadList();
+}
+
+// ---------- 录音 ----------
+function setupMic(btnSel, statusSel, onText) {
+  const btn = $(btnSel), status = statusSel ? $(statusSel) : null;
+  const say = s => { if (status) status.textContent = s; else btn.title = s; };
+  let rec = null, chunks = [], t0 = 0, timer = null;
+  btn.onclick = async () => {
+    if (rec) { rec.stop(); return; }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) {
+      alert("无法使用麦克风：" + e.message +
+        "\n\n请用 Chrome 或 Safari 打开 http://localhost:8765（Claude 内置浏览器不支持麦克风），" +
+        "并在「系统设置 → 隐私与安全性 → 麦克风」里允许该浏览器。");
+      return;
+    }
+    chunks = [];
+    rec = new MediaRecorder(stream);
+    rec.ondataavailable = e => chunks.push(e.data);
+    rec.onstop = async () => {
+      clearInterval(timer);
+      stream.getTracks().forEach(t => t.stop());
+      btn.classList.remove("recording"); btn.disabled = true; rec = null;
+      say("本地 Whisper 识别中…");
+      try {
+        const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
+        const r = await fetch(`/api/transcribe?project=${P.id}`, { method: "POST", body: blob });
+        const j = await r.json();
+        if (j.error) throw new Error(j.error);
+        say("识别完成 ✓");
+        onText(j.text);
+      } catch (e) { say("识别失败：" + e.message); }
+      btn.disabled = false;
+    };
+    rec.start();
+    btn.classList.add("recording");
+    t0 = Date.now();
+    timer = setInterval(() => say(`录音中 ${Math.round((Date.now() - t0) / 1000)}s … 再点一次结束`), 300);
+  };
+}
+
+// ---------- ① prompt ----------
+async function draftPrompt() {
+  const transcript = $("#transcript").value.trim();
+  if (!transcript) return;
+  $("#gen").disabled = true; $("#genstatus").textContent = "agent 正在整理 prompt（约 20–60 秒）…";
+  try {
+    lastDraft = { transcript, ...(await api(`/api/projects/${P.id}/draft_prompt`, { transcript })) };
+    showDraft();
+    $("#genstatus").textContent = "";
+  } catch (e) { $("#genstatus").textContent = "失败：" + e.message; }
+  $("#gen").disabled = false;
+}
+
+async function revisePrompt(feedback) {
+  if (!lastDraft) return;
+  $("#mic2s").textContent = `按「${feedback}」修改中…`;
+  try {
+    const r = await api(`/api/projects/${P.id}/draft_prompt`, { previous: $("#dprompt").value, feedback });
+    lastDraft = { ...lastDraft, ...r, transcript: lastDraft.transcript + "\n[修改] " + feedback };
+    showDraft();
+    $("#mic2s").textContent = "已按意见修改 ✓";
+  } catch (e) { $("#mic2s").textContent = "失败：" + e.message; }
+}
+
+function showDraft() {
+  const d = lastDraft;
+  $("#draft").classList.remove("hidden");
+  $("#dtitle").textContent = d.title || "Prompt";
+  $("#dprompt").value = d.prompt;
+  $("#dquestions").innerHTML = (d.questions || []).length
+    ? `<div class="warn"><b>需要你确认：</b><ul>${d.questions.map(q => `<li>${esc(q)}</li>`).join("")}</ul></div>` : "";
+  $("#dassump").innerHTML = (d.assumptions || []).length
+    ? `<details style="margin-top:8px"><summary>agent 做的推断 / 纠正的识别错误（${d.assumptions.length}）</summary><ul>${d.assumptions.map(q => `<li>${esc(q)}</li>`).join("")}</ul></details>` : "";
+}
+
+async function savePrompt() {
+  const text = $("#dprompt").value;
+  try { await navigator.clipboard.writeText(text); } catch {}
+  P = await api(`/api/projects/${P.id}/save_prompt`, { title: lastDraft.title, transcript: lastDraft.transcript, prompt: text });
+  refresh();
+  $("#mic2s").textContent = "已复制到剪贴板并记录 ✓ 去粘贴给 agent 吧。跑完后到「② 跑完后归纳」";
+  $("#transcript").value = "";
+}
+
+// ---------- ② 归纳 ----------
+async function digest() {
+  const output = $("#output").value.trim();
+  if (!output) return;
+  $("#digbtn").disabled = true; $("#digstatus").textContent = "正在对照主线归纳（约 30–90 秒）…";
+  try {
+    P = await api(`/api/projects/${P.id}/digest`, { output, prompt_id: $("#linkprompt").value || null, note: $("#note").value.trim() });
+    $("#digresult").innerHTML = entryHTML(P.entries[0], true);
+    $("#output").value = ""; $("#note").value = "";
+    $("#digstatus").textContent = "";
+    refresh();
+  } catch (e) { $("#digstatus").textContent = "失败：" + e.message; }
+  $("#digbtn").disabled = false;
+}
+
+async function applyMainline(id) {
+  const e = P.entries.find(x => x.id === id);
+  const u = e.summary.mainline_update || {};
+  const body = { ...P.mainline };
+  if (u.hypotheses) body.hypotheses = u.hypotheses;
+  if (u.focus) body.focus = u.focus;
+  P = await api(`/api/projects/${P.id}/mainline`, body);
+  document.querySelectorAll("[data-m]").forEach(t => t.value = P.mainline[t.dataset.m] || "");
+  alert("主线已更新");
+}
+
+// ---------- ③ 时间线 ----------
+const list = (title, items) => (items || []).length ? `<div class="sec">${title}</div><ul>${items.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
+
+function entryHTML(e, full) {
+  const del = `<button class="small" style="float:right" onclick="delEntry('${e.id}')">删除</button>`;
+  if (e.type === "prompt") return `<div class="entry">${del}
+    <div class="meta">${fmt(e.time)} · <span class="badge b-prompt">下达任务</span></div>
+    <h3>${esc(e.title || "任务")}</h3><div class="status">口述：${esc(e.transcript)}</div>
+    <details><summary>查看 prompt</summary><pre>${esc(e.prompt)}</pre></details></div>`;
+  if (e.type === "note") return `<div class="entry">${del}
+    <div class="meta">${fmt(e.time)} · <span class="badge b-note">笔记</span></div><div>${esc(e.text)}</div></div>`;
+  const s = e.summary, u = s.mainline_update || {};
+  const linked = e.prompt_id && P.entries.find(x => x.id === e.prompt_id);
+  return `<div class="entry ${s.relation}">${del}
+    <div class="meta">${fmt(e.time)} · <span class="badge b-${s.relation}">${REL[s.relation] || s.relation}</span>${linked ? ` · 对应任务：${esc(linked.title)}` : ""}</div>
+    <h3>${esc(s.title)}</h3>
+    <div>${esc(s.did)}</div>
+    ${(s.overreach || []).length ? `<div class="warn"><b>⚠ agent 超出要求 / 可疑操作</b><ul>${s.overreach.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+    <div class="sec">和主线的关系</div><div>${esc(s.relation_note)}</div>
+    ${list("发现", s.findings)}${list("待解决", s.open_questions)}${list("建议下一步", s.next_steps)}
+    ${e.note ? `<div class="sec">我的备注</div><div>${esc(e.note)}</div>` : ""}
+    ${(u.hypotheses || u.focus) ? `<div class="card" style="margin:8px 0;padding:10px 14px"><div class="sec" style="margin:0">建议更新主线</div>
+      ${u.hypotheses ? `<div>假设 → ${esc(u.hypotheses)}</div>` : ""}${u.focus ? `<div>焦点 → ${esc(u.focus)}</div>` : ""}
+      <button class="small" style="margin-top:6px" onclick="applyMainline('${e.id}')">采纳</button></div>` : ""}
+    ${full ? "" : `<details><summary>原始输出</summary><pre>${esc(e.output)}</pre></details>`}
+  </div>`;
+}
+
+function renderTimeline() {
+  const items = P.entries.filter(e => filter === "all" || e.type === filter || (e.type === "digest" && e.summary.relation === filter));
+  const counts = { mainline: 0, branch: 0, drift: 0 };
+  P.entries.forEach(e => e.type === "digest" && counts[e.summary.relation]++);
+  $("#timeline").innerHTML =
+    `<p class="status">共 ${P.entries.length} 条 · 主线推进 ${counts.mainline} · 支线 ${counts.branch} · 偏离 ${counts.drift}</p>` +
+    (items.map(e => entryHTML(e)).join("") || `<div class="empty">暂无记录</div>`);
+  document.querySelectorAll("#filters button").forEach(b => b.classList.toggle("primary", b.dataset.f === filter));
+}
+
+async function addNote() {
+  const text = $("#quicknote").value.trim();
+  if (!text) return;
+  P = await api(`/api/projects/${P.id}/note`, { text });
+  $("#quicknote").value = "";
+  refresh();
+}
+
+async function delEntry(id) {
+  if (!confirm("删除这条记录？")) return;
+  P = await api(`/api/projects/${P.id}/delete_entry`, { id });
+  refresh();
+}
+
+(async () => {
+  const st = await api("/api/status");
+  $("#sys").innerHTML = `Whisper ${st.whisper && st.model ? "✓" : "✗"} · Claude CLI ${st.claude ? "✓" : "✗"}`;
+  const list = await loadList();
+  let last = null; try { last = localStorage.getItem("rm-last"); } catch {}
+  const pick = list.find(p => p.id === last) || list[0];
+  if (pick) openProject(pick.id);
+})();
+</script>
+</body>
+</html>
