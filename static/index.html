@@ -203,12 +203,7 @@ dialog#handoff::backdrop { background: rgba(0,0,0,.2); }
 <template id="tpl-welcome">
   <div class="welcome" data-tauri-drag-region>
     <div>
-      <svg viewBox="100 100 824 824" width="72" height="72">
-        <rect x="100" y="100" width="824" height="824" rx="185" fill="#d97757"/>
-        <rect x="252" y="300" width="520" height="350" rx="52" fill="none" stroke="#fff" stroke-width="38"/>
-        <path d="M420 744h184M512 650v94" stroke="#fff" stroke-width="38" stroke-linecap="round"/>
-        <g stroke="#fff" stroke-width="38" stroke-linecap="round"><path d="M440 420v110"/><path d="M512 380v190"/><path d="M584 428v94"/></g>
-      </svg>
+      <img src="/logo.png" width="90" height="90" alt="Research Manager" style="display:block;margin:0 auto">
       <h1>看见 agent 在做什么。</h1>
       <p id="welcome-hint"></p>
       <button class="pill o" style="margin-top:14px;height:30px;padding:0 16px" onclick="openPicker()">＋ 添加会话</button>

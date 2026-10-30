@@ -9,21 +9,14 @@
     font: 14px -apple-system, "PingFang SC", sans-serif; -webkit-user-select: none; }
   @media (prefers-color-scheme: dark) { body { background: #1c1c1e; } }
   .box { text-align: center; }
-  svg { width: 88px; height: 88px; }
-  .wave path { animation: b 1s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
-  .wave path:nth-child(2) { animation-delay: .15s } .wave path:nth-child(3) { animation-delay: .3s }
-  @keyframes b { 50% { transform: scaleY(.4); } }
+  img { display: block; margin: 0 auto; animation: breathe 1.6s ease-in-out infinite; }
+  @keyframes breathe { 50% { transform: scale(.94); opacity: .85; } }
   p { margin-top: 18px; }
 </style>
 </head>
 <body data-tauri-drag-region>
   <div class="box">
-    <svg viewBox="100 100 824 824">
-      <rect x="100" y="100" width="824" height="824" rx="185" fill="#d97757"/>
-      <rect x="252" y="300" width="520" height="350" rx="52" fill="none" stroke="#fff" stroke-width="38"/>
-      <path d="M420 744h184M512 650v94" stroke="#fff" stroke-width="38" stroke-linecap="round"/>
-      <g class="wave" stroke="#fff" stroke-width="38" stroke-linecap="round"><path d="M440 420v110"/><path d="M512 380v190"/><path d="M584 428v94"/></g>
-    </svg>
+    <img src="logo.png" width="110" height="110" alt="">
     <p id="msg">正在启动…</p>
   </div>
 <script>

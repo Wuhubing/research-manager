@@ -40,7 +40,8 @@
       "../../server.py": "core/server.py",
       "../../lab.py": "core/lab.py",
       "../../static/index.html": "core/static/index.html",
-      "../../static/projects.html": "core/static/projects.html"
+      "../../static/projects.html": "core/static/projects.html",
+      "../../static/logo.png": "core/static/logo.png"
     },
     "macOS": {
       "minimumSystemVersion": "12.0"
