@@ -35,6 +35,7 @@ DIM, BOLD, RED, GREEN, YELLOW, CYAN, RESET = "\033[2m", "\033[1m", "\033[31m", "
 # 当前工作会话的记录在 run_claude() 里按单个文件放行。
 ALLOWED_TOOLS = ["Bash(git status:*)", "Bash(git diff:*)",
                  "Bash(git log:*)", "Bash(git show:*)", "Bash(ls:*)"]
+SECRET_PATTERNS = ["**/.env*", "**/*.pem", "**/*.key", "**/id_rsa*", "**/.ssh/**"]
 
 SYSTEM = """你是研究者的“科研管家”，长期陪伴同一个研究项目。研究者通过语音和你说话（语音识别可能有错字，请按上下文纠正）。
 
@@ -362,9 +363,21 @@ def transcribe_recording(wav, hint=""):
 
 # ---------------------------------------------------------------- 管家
 
+def git_root(path):
+    """会话可能停在项目的子目录里，管家的项目目录要用 git 根目录；不是 git 仓库就用原目录。"""
+    try:
+        r = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            return Path(r.stdout.strip()).resolve()
+    except Exception:
+        pass
+    return Path(path).resolve()
+
+
 class Lab:
     def __init__(self, project, pick=False, work=None):
-        self.project = Path(project).resolve()
+        self.project = git_root(project)
         self.pinned = work is not None
         self.dir = self.project / ".research"
         self.dir.mkdir(exist_ok=True)
@@ -446,6 +459,9 @@ class Lab:
         if self.work:
             # 只放行当前这一个会话记录（// 开头表示绝对路径），同一文件夹里的其他会话和子 agent 记录都读不到
             cmd += ["--allowedTools", f"Read(/{self.work})", f"Grep(/{self.work})"]
+        # 项目里的密钥类文件一律不许读（Grep/Glob 也会跳过它们）
+        cmd += ["--disallowedTools", *(f"{tool}(/{self.project}/{pattern})" for tool in ("Read", "Grep")
+                                       for pattern in SECRET_PATTERNS)]
         if CLAUDE_MODEL:
             cmd += ["--model", CLAUDE_MODEL]
         if resume and self.state.get("manager_session"):

@@ -319,7 +319,7 @@ def session_detail(sid):
     cwd = lab.session_cwd(path)
     size = path.stat().st_size
     activity, _ = lab.condense(path, max(0, size - 2_000_000), budget=120_000)
-    rdir = Path(cwd) / ".research"
+    rdir = lab.git_root(cwd) / ".research"
     mainline = (rdir / "mainline.md").read_text() if (rdir / "mainline.md").exists() else lab.MAINLINE_TEMPLATE
     history = json.loads((rdir / "history.json").read_text()) if (rdir / "history.json").exists() else []
     for h in history:
