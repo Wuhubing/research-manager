@@ -64,6 +64,35 @@ agent 做了研究者没要求的事、改了范围外的东西、换方法、�
 </mainline>
 主线为空时，请根据研究者的话主动起草一版。"""
 
+HANDOFF_SYSTEM = """你是研究者的科研管家。研究者的一个 Claude Code 工作会话上下文快满了，要换一个新会话继续。
+你的任务：读完整个旧会话，写一份交接文档，让新会话里的 agent 不丢任何重要信息，也不重复踩坑。
+需要时可以用只读工具核实项目里的文件和 git 状态（比如确认哪些改动已经提交）。
+
+只写真实发生过、你能从记录或文件里确认的内容；不确定的标“待确认”。具体到文件路径、命令、数字。
+
+输出格式（中文 markdown，小节没有内容就写“无”）：
+
+# 交接：<一句话说明这个会话在做什么>
+
+## 目标和研究主线
+## 已完成
+（做了什么、关键结果和数字、改动或新增的文件、是否已提交）
+## 关键决定和原因
+（选了什么方案、为什么、否决了什么）
+## 当前进度
+（停在哪一步、哪些东西还没验证、正在跑的东西）
+## 不要做的事
+（研究者明确说过不许做的、之前 agent 越界被纠正过的）
+## 下一步
+## 建议写进 CLAUDE.md 的长期信息
+（每次新会话都该知道的约定，没有就写“无”）
+
+## Prompt
+```prompt
+<新会话的第一条消息：说明这是接续之前的工作，概括上面的要点（交接文档的路径会由系统自动加在开头，你不用写），
+写明下一步要做什么和范围边界，并要求 agent 先复述它理解的当前状态、等研究者确认后再动手>
+```"""
+
 MAINLINE_TEMPLATE = """# 研究主线
 
 - **核心问题**：
@@ -325,6 +354,10 @@ class Lab:
                     "不管研究者是在派任务、聊想法还是问情况，回复最后都要有 ## Prompt 和 ```prompt 代码块，"
                     "把他的意思整理成一条能直接发给工作 agent 的 prompt。"
                     "如果他只是问情况，就写一条让 agent 去核实并汇报这件事的 prompt。")
+        return self.run_claude(msg)
+
+    def run_claude(self, msg, resume=True, system=SYSTEM):
+        """调用只读的管家。resume=True 时接着管家自己的长期会话；False 时是一次性调用（不占用管家的上下文）。"""
         cmd = ["claude", "-p", "--output-format", "stream-json", "--verbose",
                "--permission-mode", "default",
                "--tools", "Read,Grep,Glob,Bash",
@@ -332,10 +365,12 @@ class Lab:
                "--add-dir", str(self.project)]
         if CLAUDE_MODEL:
             cmd += ["--model", CLAUDE_MODEL]
-        if self.state.get("manager_session"):
+        if resume and self.state.get("manager_session"):
             cmd += ["--resume", self.state["manager_session"]]
         else:
-            cmd += ["--append-system-prompt", SYSTEM]
+            cmd += ["--append-system-prompt", system]
+        if not resume:
+            cmd += ["--no-session-persistence"]
         print(f"{DIM}  管家思考中…{RESET}")
         # 在 .research 目录里运行，管家自己的会话不会和工作会话混在一起
         p = subprocess.Popen(cmd, cwd=self.dir, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -359,10 +394,50 @@ class Lab:
         p.wait()
         if not result or result.get("is_error"):
             raise RuntimeError("管家调用失败：" + (result or {}).get("result", p.stderr.read()[-500:]))
-        if not self.state.get("manager_session"):
+        if resume and not self.state.get("manager_session"):
             self.state["manager_session"] = result["session_id"]
-        self.save()
+            self.save()
         return result["result"]
+
+    def handoff_checkpoint(self):
+        """上次为这个会话生成的交接；up_to_date 表示会话之后没有任何变化。"""
+        if not self.work:
+            return None
+        cp = json.loads((self.dir / "handoffs.json").read_text()) if (self.dir / "handoffs.json").exists() else {}
+        rec = cp.get(self.work.stem)
+        if not rec or not Path(rec["path"]).exists():
+            return None
+        return {**rec, "up_to_date": rec["size"] == self.work.stat().st_size}
+
+    def handoff(self, force=False):
+        """读完整个工作会话，生成交接文档和新会话的第一条 prompt，存到 .research/handoff-*.md。
+        会话自上次交接后没有变化时直接复用上次的结果（检查点），force=True 强制重新生成。"""
+        if not self.work:
+            raise RuntimeError("没有工作会话")
+        rec = self.handoff_checkpoint()
+        if rec and rec["up_to_date"] and not force:
+            path = Path(rec["path"])
+            return {"doc": path.read_text(), "prompt": path.with_suffix(".prompt.txt").read_text(),
+                    "path": str(path), "time": rec["time"], "cached": True}
+        size = self.work.stat().st_size  # 生成过程中会话又变了，就不算最新
+        full, _ = condense(self.work, 0, budget=150_000)
+        recent = "\n\n".join(f"- {time.strftime('%m-%d %H:%M', time.localtime(h['time']))} "
+                              f"我说：{h['said'] or '（只要归纳）'}\n{clip(h['reply'], 1500)}"
+                              for h in self.history()[-8:] if h.get("session") == self.work.stem)
+        msg = (f"# 研究主线\n{self.mainline()}\n\n"
+               f"# 管家之前对这个会话的归纳（最近几次）\n{recent or '（没有）'}\n\n"
+               f"# 工作会话的完整记录（会话：{session_title(self.work)}，项目目录：{self.project}）\n{full}")
+        doc = self.run_claude(msg, resume=False, system=HANDOFF_SYSTEM)
+        path = self.dir / f"handoff-{time.strftime('%Y%m%d-%H%M%S')}.md"
+        path.write_text(doc + "\n")
+        _, _, prompt = parse_reply(doc)
+        prompt = f"交接文档在 {path}，请先用 Read 完整读一遍。\n\n{prompt or doc}"
+        path.with_suffix(".prompt.txt").write_text(prompt)
+        cpf = self.dir / "handoffs.json"
+        cp = json.loads(cpf.read_text()) if cpf.exists() else {}
+        cp[self.work.stem] = {"path": str(path), "size": size, "time": time.time()}
+        cpf.write_text(json.dumps(cp, ensure_ascii=False, indent=1))
+        return {"doc": doc, "prompt": prompt, "path": str(path), "time": cp[self.work.stem]["time"], "cached": False}
 
     def history(self):
         f = self.dir / "history.json"
@@ -393,12 +468,29 @@ class Lab:
                 self.mainline_file.write_text(mainline + "\n")
                 print(f"{GREEN}✓ 主线已更新（.research/mainline.md）{RESET}")
 
+    def do_handoff(self, force=False):
+        rec = self.handoff_checkpoint()
+        if rec and rec["up_to_date"] and not force:
+            print(f"{DIM}  会话自上次交接后没有变化，直接用上次的交接（/h! 强制重新生成）{RESET}")
+        else:
+            print(f"{DIM}  读完整个会话、整理交接文档，约 1–2 分钟…{RESET}")
+        h = self.handoff(force)
+        print("\n" + colorize(re.sub(r"```prompt.*?```", "", h["doc"], flags=re.S)) + "\n")
+        subprocess.run("pbcopy", input=h["prompt"], text=True)
+        print(f"{GREEN}✓ 交接文档已保存：{h['path']}，新会话的第一条消息已复制到剪贴板{RESET}")
+        if input("在 Terminal 里新开一个 claude 会话？[y/N] ").strip().lower() == "y":
+            open_terminal_session(self.project, Path(h["path"]).with_suffix(".prompt.txt"))
+            print(f"{GREEN}✓ 已在 Terminal 打开新会话{RESET}")
+
     def loop(self):
         print(f"\n{BOLD}🔬 lab · {self.project.name}{RESET}")
         if self.work:
-            print(f"{DIM}  工作会话：{session_title(self.work)}{RESET}")
+            c = context_usage(self.work)
+            color = RED if c["pct"] >= 85 else YELLOW if c["pct"] >= 70 else DIM
+            print(f"{DIM}  工作会话：{session_title(self.work)}{RESET}  "
+                  f"{color}上下文 {c['tokens'] // 1000}K / {c['window'] // 1000}K · {c['pct']}%{RESET}")
         print(f"{DIM}  主线：.research/mainline.md   日志：.research/log.md{RESET}")
-        print(f"{DIM}  [回车] 录音   [直接打字+回车] 文字输入   /s 只归纳   /m 看主线   /p 换工作会话   /q 退出{RESET}\n")
+        print(f"{DIM}  [回车] 录音   [直接打字+回车] 文字输入   /s 只归纳   /h 交接到新会话   /m 看主线   /p 换工作会话   /q 退出{RESET}\n")
         while True:
             try:
                 line = input(f"{CYAN}lab>{RESET} ").strip()
@@ -416,6 +508,9 @@ class Lab:
                     continue
                 if line == "/s":
                     self.handle("")
+                    continue
+                if line in ("/h", "/h!"):
+                    self.do_handoff(force=line == "/h!")
                     continue
                 said = line or transcribe_recording(record(), self.project.name)
                 if not said:
@@ -454,6 +549,48 @@ def session_cwd(path):
             if i > 200:
                 break
     return None
+
+
+CONTEXT_WINDOWS = {"auto": "自动", "200000": "200K", "1000000": "1M"}
+
+
+def context_window(tokens=0):
+    """设置里指定了就用指定的；"自动"时默认 200K，已经超过 200K 的会话说明模型支持 1M。"""
+    w = str(load_settings().get("context_window") or "auto")
+    if w != "auto":
+        return int(w)
+    return 1_000_000 if tokens > 200_000 else 200_000
+
+
+def context_usage(path):
+    """从会话记录末尾找最近一轮主对话的 token 用量，估算当前上下文大小。"""
+    with open(path, "rb") as f:
+        f.seek(max(0, path.stat().st_size - 2_000_000))
+        lines = f.read().decode("utf-8", "ignore").splitlines()
+    for raw in reversed(lines):
+        if '"usage"' not in raw:
+            continue
+        try:
+            d = json.loads(raw)
+        except Exception:
+            continue
+        msg = d.get("message")
+        if d.get("type") != "assistant" or d.get("isSidechain") or not isinstance(msg, dict) or not msg.get("usage"):
+            continue
+        u = msg["usage"]
+        tokens = sum(u.get(k, 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+        win = context_window(tokens)
+        return {"tokens": tokens, "window": win, "pct": round(100 * tokens / win), "model": msg.get("model")}
+    return {"tokens": 0, "window": context_window(), "pct": 0, "model": None}
+
+
+def open_terminal_session(cwd, prompt_file):
+    """在 Terminal 里打开一个新的 claude 会话，第一条消息是交接 prompt。"""
+    import shlex
+    shell = f"cd {shlex.quote(str(cwd))} && claude \"$(cat {shlex.quote(str(prompt_file))})\""
+    script = shell.replace("\\", "\\\\").replace('"', '\\"')
+    subprocess.run(["osascript", "-e", f'tell application "Terminal" to do script "{script}"',
+                    "-e", 'tell application "Terminal" to activate'], check=True, capture_output=True)
 
 
 def all_sessions(days=60, limit=400):

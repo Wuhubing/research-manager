@@ -99,7 +99,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         let title: String = s["title"].as_str().unwrap_or("会话").chars().take(28).collect();
         let status = ago(s["mtime"].as_f64().unwrap_or(0.0));
         let dot = if status == "运行中" { "●" } else { "○" };
-        menu.append(&MenuItem::with_id(app, format!("s:{id}"), format!("{dot} {title}  —  {status}"), true, None::<&str>)?)?;
+        // 上下文超过 70% 提示，超过 85% 加警告
+        let pct = s["context"]["pct"].as_u64().unwrap_or(0);
+        let ctx = match pct {
+            85.. => format!(" · ⚠ 上下文 {pct}%"),
+            70..=84 => format!(" · 上下文 {pct}%"),
+            _ => String::new(),
+        };
+        menu.append(&MenuItem::with_id(app, format!("s:{id}"), format!("{dot} {title}  —  {status}{ctx}"), true, None::<&str>)?)?;
     }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     menu.append(&MenuItem::with_id(app, "open", "打开主窗口", true, Some("CmdOrCtrl+O"))?)?;

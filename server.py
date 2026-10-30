@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -209,7 +210,9 @@ def settings_view():
     key = lab.openai_key()
     return {"openai_key_set": bool(key), "openai_key_hint": f"sk-…{key[-4:]}" if key else "",
             "openai_key_from_env": bool(os.environ.get("OPENAI_API_KEY")),
-            "asr_model": lab.asr_model(), "asr_models": lab.ASR_MODELS}
+            "asr_model": lab.asr_model(), "asr_models": lab.ASR_MODELS,
+            "context_window": str(lab.load_settings().get("context_window") or "auto"),
+            "context_windows": lab.CONTEXT_WINDOWS}
 
 
 # ---------------------------------------------------------------- 语音
@@ -241,6 +244,33 @@ def save_watch(ids):
     WATCH_FILE.write_text(json.dumps([i for i in ids if re.fullmatch(r"[0-9a-f-]{36}", i)]))
 
 
+# 交接：新会话接替旧会话的关系 {新会话 id: 旧会话 id}
+LINKS_FILE = Path.home() / ".research-manager" / "links.json"
+
+
+def load_links():
+    return json.loads(LINKS_FILE.read_text()) if LINKS_FILE.exists() else {}
+
+
+def adopt_new_session(cwd, old_id, started):
+    """在 Terminal 里新开会话后，等它的记录文件出现，自动加进关注列表并记下接替关系。"""
+    def watch():
+        for _ in range(120):
+            time.sleep(2)
+            new = [f for f in lab.list_sessions(cwd) if f.stat().st_mtime > started and f.stem != old_id]
+            if new:
+                nid = new[0].stem
+                links = load_links()
+                links[nid] = old_id
+                LINKS_FILE.write_text(json.dumps(links, indent=1))
+                ids = load_watch()
+                if nid not in ids:
+                    pos = ids.index(old_id) + 1 if old_id in ids else len(ids)
+                    save_watch(ids[:pos] + [nid] + ids[pos:])
+                return
+    threading.Thread(target=watch, daemon=True).start()
+
+
 def session_detail(sid):
     path = lab.find_session(sid)
     cwd = lab.session_cwd(path)
@@ -251,8 +281,16 @@ def session_detail(sid):
     history = json.loads((rdir / "history.json").read_text()) if (rdir / "history.json").exists() else []
     for h in history:
         _, h["reply"], h["prompt"] = lab.parse_reply(h["reply"])
+    prev = load_links().get(sid)
+    try:
+        prev_title = lab.session_title(lab.find_session(prev)) if prev else None
+    except Exception:
+        prev_title = None
     return {"id": sid, "cwd": cwd, "title": lab.session_title(path), "mtime": path.stat().st_mtime,
-            "activity": activity, "mainline": mainline, "history": history[-30:]}
+            "activity": activity, "mainline": mainline, "history": history[-30:],
+            "context": lab.context_usage(path),
+            "continues": {"id": prev, "title": prev_title} if prev else None,
+            "handoff": lab.Lab(cwd, work=path).handoff_checkpoint() if rdir.exists() else None}
 
 
 # ---------------------------------------------------------------- HTTP
@@ -301,7 +339,8 @@ class Handler(SimpleHTTPRequestHandler):
                 for i in ids:
                     try:
                         p = lab.find_session(i)
-                        found[i] = {"id": i, "title": lab.session_title(p), "mtime": p.stat().st_mtime}
+                        found[i] = {"id": i, "title": lab.session_title(p), "mtime": p.stat().st_mtime,
+                                    "context": lab.context_usage(p)}
                     except Exception:
                         pass
                 return self.send_json([found[i] for i in ids if i in found])
@@ -339,16 +378,30 @@ class Handler(SimpleHTTPRequestHandler):
                     lab.set_openai_key(key)
                 if req.get("asr_model") in lab.ASR_MODELS:
                     lab.save_settings(asr_model=req["asr_model"])
+                if req.get("context_window") in lab.CONTEXT_WINDOWS:
+                    lab.save_settings(context_window=req["context_window"])
                 return self.send_json(settings_view())
             if self.path == "/api/watch":
                 save_watch(req.get("ids", []))
                 return self.send_json(load_watch())
-            m = re.fullmatch(r"/api/sessions/([0-9a-f-]+)/(ask|mainline)", self.path)
+            m = re.fullmatch(r"/api/sessions/([0-9a-f-]+)/(ask|mainline|handoff|newsession)", self.path)
             if m:
                 path = lab.find_session(m.group(1))
                 mgr = lab.Lab(lab.session_cwd(path), work=path)
                 if m.group(2) == "mainline":
                     mgr.mainline_file.write_text(req["text"].strip() + "\n")
+                    return self.send_json({"ok": True})
+                if m.group(2) == "handoff":
+                    return self.send_json(mgr.handoff(force=bool(req.get("force"))))
+                if m.group(2) == "newsession":
+                    # 只接受管家生成在 .research 里的交接文件，用它旁边的 .prompt.txt 作为新会话第一条消息
+                    doc = Path(req["path"]).resolve()
+                    pfile = doc.with_suffix(".prompt.txt")
+                    if doc.parent != mgr.dir.resolve() or not doc.name.startswith("handoff-") or not pfile.exists():
+                        return self.send_json({"error": "交接文件路径不对"}, 400)
+                    started = time.time()
+                    lab.open_terminal_session(mgr.project, pfile)
+                    adopt_new_session(mgr.project, m.group(1), started)
                     return self.send_json({"ok": True})
                 said = req.get("said", "").strip()
                 reply = mgr.ask(said, want_prompt=bool(said) and req.get("want_prompt", True))
