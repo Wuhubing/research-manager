@@ -331,11 +331,18 @@ function welcome() {
 }
 
 // ---------- 侧栏 ----------
-async function loadSessions() {
-  let watched;
-  [SESSIONS, WATCH, watched] = await Promise.all([api("/api/sessions"), api("/api/watch"), api("/api/watched")]);
-  CTX = Object.fromEntries(watched.map(w => [w.id, w.context]));
-  renderSessions();
+// 三个请求互不影响：哪个失败就沿用上一次的数据，左栏照样重画。正在刷新时不重复发起。
+let loadingSessions = null;
+function loadSessions() {
+  return loadingSessions ??= (async () => {
+    try {
+      const [s, w, watched] = await Promise.allSettled([api("/api/sessions"), api("/api/watch"), api("/api/watched")]);
+      if (s.status === "fulfilled") SESSIONS = s.value;
+      if (w.status === "fulfilled") WATCH = w.value;
+      if (watched.status === "fulfilled") CTX = Object.fromEntries(watched.value.map(x => [x.id, x.context]));
+      renderSessions();
+    } finally { loadingSessions = null; }
+  })();
 }
 function groupByDir(list) {
   const groups = new Map();
@@ -701,16 +708,22 @@ function setupMic() {
   };
 }
 
+// 左栏和当前会话各刷各的，互不等待；失败只影响这一轮
+function refresh() {
+  loadSessions().catch(() => {});
+  if (CUR && !busy) openSession(CUR.id).catch(() => {});
+}
+// 窗口被隐藏或在后台时，WebKit 会把定时器降到大约每分钟一次；窗口回到前台时立刻刷新一次
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
+addEventListener("focus", refresh);
+setInterval(refresh, 15000);   // 不管第一次加载成没成功都要启动
+
 (async () => {
   checkStatus();  // 只在缺依赖时提示
-  await loadSessions();
+  await loadSessions().catch(() => {});
   let last = null; try { last = localStorage.getItem("rm-session"); } catch {}
   const pick = SESSIONS.find(s => s.id === last && WATCH.includes(s.id));
   pick ? openSession(pick.id) : welcome();
-  setInterval(async () => {
-    await loadSessions();
-    if (CUR && !busy) openSession(CUR.id);
-  }, 15000);
 })();
 </script>
 </body>
