@@ -36,7 +36,7 @@ cd research-manager
 ```
 
 `install.sh` 会做这些事：
-- 安装 `ffmpeg`（终端录音用）
+- 安装 `ffmpeg`（⌃P 菜单栏录音和终端版录音都用它）
 - 把 `lab` 命令链接到 `~/.local/bin`
 
 ### 配置 OpenAI API key（语音识别）
@@ -70,6 +70,20 @@ open "src-tauri/target/release/bundle/macos/Research Manager.app"
 - **麦克风**：第一次录音时 macOS 会请求权限，点允许即可。
 
 可以把打包好的 `Research Manager.app` 拖进「应用程序」文件夹。
+
+#### ⌃P 菜单栏录音
+
+在任何 App 里都能用，不用打开窗口：
+
+1. 按 **⌃P**：开始录音，菜单栏菜单自动弹出，最上面显示“● 正在录音…”。录音期间菜单保持打开。
+2. 说完再按一次 **⌃P**（或点「■ 结束录音」）：用 OpenAI 识别，大约 2 秒后菜单再弹出来。
+3. 识别出的原话**已经自动复制到剪贴板**，并显示在菜单最上面；点「再复制一次」可以重新复制。
+
+说明：
+
+- 录音由本地服务调用 `ffmpeg` 完成，录音时菜单栏会出现 macOS 的麦克风提示，结束后消失。
+- 单次录音最长 10 分钟。App 或服务退出时会停掉正在进行的录音；服务启动时也会清理上次没停掉的录音。
+- ⌃P 在终端里是“上一条命令”，注册成全局快捷键后会被占用。想换成别的组合，在 `~/.research-manager/settings.json` 里加 `"quick_shortcut": "Control+Shift+P"`，重启 App 生效。
 
 ### 网页版
 
