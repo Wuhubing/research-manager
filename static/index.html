@@ -308,7 +308,14 @@ dialog#handoff::backdrop { background: rgba(0,0,0,.2); }
 const DESKTOP = "__TAURI_INTERNALS__" in window || (/AppleWebKit/.test(navigator.userAgent) && !/Safari\//.test(navigator.userAgent));
 if (DESKTOP) document.body.classList.add("desktop");
 
-let SESSIONS = [], WATCH = [], CTX = {}, CUR = null, busy = false;
+let SESSIONS = [], WATCH = [], CTX = {}, CUR = null;
+// 管家请求和语音都绑定在发起时的会话上（按会话 id 存），切走再切回状态还在，回复到了也不会落到别的会话
+const ASKS = {};        // 会话 id → {said, summaryOnly, t0, state: "thinking" | "queued" | "failed", ahead, error, back, seen}
+const VOICE = {};       // 会话 id → "transcribing" | {error}
+const NOTE = {};        // 会话 id → 输入框下面的状态文字
+const DRAFT = {};       // 会话 id → 切走时输入框里没发出去的话
+const UNREAD = new Set();   // 回复到了、还没看的会话
+let REC = null;         // 正在录音：{sid, rec, t0}。只有一个麦克风，同一时间只有一段录音
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const ago = t => { const m = (Date.now() / 1000 - t) / 60; return m < 3 ? "运行中" : m < 60 ? `${m | 0} 分钟前` : m < 1440 ? `${(m / 60) | 0} 小时前` : `${(m / 1440) | 0} 天前`; };
@@ -324,6 +331,8 @@ async function api(path, body) {
 }
 
 function welcome() {
+  if (CUR && $("#said")) DRAFT[CUR.id] = $("#said").value;
+  if (REC) REC.rec.stop();
   CUR = null;
   $("#main").innerHTML = "";
   $("#main").append($("#tpl-welcome").content.cloneNode(true));
@@ -353,13 +362,25 @@ function groupByDir(list) {
   }
   return [...groups];
 }
+// 左栏会话旁边的状态标记
+function sessStatus(id) {
+  const a = ASKS[id], v = VOICE[id], away = !(CUR && CUR.id === id);
+  if (REC && REC.sid === id) return "录音中";
+  if (v === "transcribing") return "识别中";
+  if (a && a.state === "queued") return "排队中";
+  if (a && a.state !== "failed") return "管家思考中";
+  if (UNREAD.has(id)) return "有新回复";
+  if (away && a && a.state === "failed" && !a.seen) return "发送失败";
+  if (away && v && v.error) return "识别失败";
+  return "";
+}
 function renderSessions() {
   const watched = SESSIONS.filter(s => WATCH.includes(s.id));
   $("#sessions").innerHTML = (watched.length ? groupByDir(watched).map(([g, list]) =>
     `<div class="group" title="${esc(g)}">${esc(g)}</div>` + list.map(s => `
       <div class="sess ${CUR && CUR.id === s.id ? "active" : ""}" onclick="openSession('${s.id}')">
         <div class="t"><span class="dot ${isLive(s.mtime) ? "live" : ""}"></span><span>${esc(s.title)}</span></div>
-        <div class="m">${ago(s.mtime)}${CTX[s.id] && CTX[s.id].pct >= 70 ? ` · <span class="${ctxLevel(CTX[s.id].pct) === "full" ? "full" : "hot"}">上下文 ${CTX[s.id].pct}%</span>` : ""}</div>
+        <div class="m">${ago(s.mtime)}${CTX[s.id] && CTX[s.id].pct >= 70 ? ` · <span class="${ctxLevel(CTX[s.id].pct) === "full" ? "full" : "hot"}">上下文 ${CTX[s.id].pct}%</span>` : ""}${sessStatus(s.id) ? ` · <span class="hot">${sessStatus(s.id)}</span>` : ""}</div>
         <button class="x" title="从列表移除" onclick="event.stopPropagation(); unwatch('${s.id}')">×</button>
       </div>`).join("")).join("") : "") +
     `<button class="add" onclick="openPicker()">＋ 添加会话</button>`;
@@ -406,6 +427,8 @@ async function savePicker() {
 async function openSession(id) {
   const d = await api("/api/sessions/" + id);
   const first = !CUR || CUR.id !== id;
+  if (first && CUR && $("#said")) DRAFT[CUR.id] = $("#said").value;   // 切走前记下这个会话没发出去的话
+  if (first && REC) REC.rec.stop();   // 录音属于发起它的会话：切走时自动结束，识别和发送仍然算原会话的
   CUR = d;
   try { localStorage.setItem("rm-session", id); } catch {}
   if (first) {
@@ -415,12 +438,16 @@ async function openSession(id) {
     const ta = $("#said");
     ta.onkeydown = e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(); } };
     ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 140) + "px"; };
+    ta.value = DRAFT[id] || ""; delete DRAFT[id]; ta.oninput();
     $("#mltext").value = d.mainline;
     if (/：\s*$/m.test(d.mainline) && !d.history.length) $("#mlbox").open = true;
     renderTurns();
   }
   $("#stitle").textContent = d.title;
   $("#smeta").textContent = `${short(d.cwd)} · ${ago(d.mtime)}` + (d.continues ? ` · 接替自「${d.continues.title || "旧会话"}」` : "");
+  UNREAD.delete(id);
+  if (VOICE[id] && VOICE[id].error) { NOTE[id] = "识别失败：" + VOICE[id].error; delete VOICE[id]; }
+  renderMic(); renderAskButtons();
   renderContext(d.context);
   renderHandoffBtn();
   const body = $("#activity").parentElement;
@@ -547,8 +574,24 @@ function turnHTML(t, i) {
     ${t.mainline ? `<div class="card"><div class="ch">建议更新主线<button class="pill g" onclick="adoptMainline(this)">采纳</button></div><pre>${esc(t.mainline)}</pre></div>` : ""}
   </div>`;
 }
+// 这个会话还没回来（或失败了）的请求：切走再切回也会画出来，计时从发出时算起
+function thinkingText(a) {
+  const sec = ((Date.now() - a.t0) / 1000) | 0;
+  return a.state === "queued"
+    ? `排队中：这个项目的管家正在回答别的会话${a.ahead > 1 ? `（前面还有 ${a.ahead} 个）` : ""} · ${sec}s`
+    : `管家正在思考… 正在看会话、核实文件 · ${sec}s`;
+}
+function pendingHTML(a) {
+  const said = `<div class="said${a.state === "failed" ? " failed" : ""}">${esc(a.said || "只要归纳")}</div>`;
+  if (a.state === "failed")
+    return `<div class="turn" style="display:flex;flex-direction:column">${said}<div class="bot err">发送失败：${esc(a.error)}${a.back ? "（原文已放回输入框）" : ""}</div></div>`;
+  return `<div class="turn" id="pending" style="display:flex;flex-direction:column">${said}
+    <div class="bot thinking" id="thinkbox"><span class="dots"><i></i><i></i><i></i></span><span id="thinking">${thinkingText(a)}</span></div></div>`;
+}
 function renderTurns() {
-  $("#turns").innerHTML = CUR.history.length ? CUR.history.map(turnHTML).join("")
+  const a = ASKS[CUR.id];
+  if (a) a.seen = true;
+  $("#turns").innerHTML = CUR.history.length || a ? CUR.history.map(turnHTML).join("") + (a ? pendingHTML(a) : "")
     : `<div class="empty" style="padding:30px 0">还没和管家聊过。<br>点「只归纳」，或者问它：“它刚才到底干了什么？”</div>`;
   const last = CUR.history.length && relOf(CUR.history[CUR.history.length - 1].reply);
   $("#reltag").innerHTML = last ? `<span class="tag ${last[0]}">${last[1]}</span>` : "";
@@ -592,53 +635,73 @@ function adoptMainline(btn) {
 function saveMainline(btn) {
   return withState(btn, "保存中…", "已保存 ✓", () => api(`/api/sessions/${CUR.id}/mainline`, { text: $("#mltext").value }));
 }
-async function ask(summaryOnly) {
-  if (busy) return;
-  const ta = $("#said");
-  const said = summaryOnly ? "" : ta.value.trim();
+// 发给管家。sid 是发起时的会话（默认当前会话）；text 给了就直接发它（后台发给切走的会话时用），不碰输入框
+async function ask(summaryOnly, sid = CUR && CUR.id, text) {
+  if (!sid || (ASKS[sid] && ASKS[sid].state !== "failed")) return;   // 这个会话已经有请求在跑
+  const here = () => CUR && CUR.id === sid;
+  const said = summaryOnly ? "" : (text !== undefined ? text : $("#said").value).trim();
   if (!summaryOnly && !said) return;
-  busy = true;
-  const btn = summaryOnly ? $("#sumbtn") : $("#sendbtn");
-  const label = btn.textContent;
-  $("#sendbtn").disabled = $("#sumbtn").disabled = true;
-  btn.textContent = summaryOnly ? "归纳中…" : "发送中…";
-  if (!summaryOnly) { ta.value = ""; ta.style.height = "auto"; }   // 立刻清空，表示已经发出
-  const id = CUR.id, t0 = Date.now();
-  if ($("#turns .empty")) $("#turns").innerHTML = "";
-  $("#turns").insertAdjacentHTML("beforeend", `<div class="turn" id="pending" style="display:flex;flex-direction:column">
-    <div class="said">${esc(said || "只要归纳")}</div>
-    <div class="bot thinking" id="thinkbox"><span class="dots"><i></i><i></i><i></i></span><span id="thinking">管家正在思考…</span></div></div>`);
-  $("#mgrbody").scrollTop = $("#mgrbody").scrollHeight;
-  $("#micst").textContent = "已发送，管家正在处理";
-  const tick = setInterval(() => {
-    const e = $("#thinking");
-    if (e) e.textContent = `管家正在思考… 正在看会话、核实文件 · ${((Date.now() - t0) / 1000) | 0}s`;
-  }, 1000);
+  if (!summaryOnly && text === undefined) { const ta = $("#said"); ta.value = ""; ta.style.height = "auto"; }   // 立刻清空，表示已经发出
+  ASKS[sid] = { said, summaryOnly, t0: Date.now(), state: "thinking" };
+  NOTE[sid] = "已发送，管家正在处理";
+  UNREAD.delete(sid);
+  if (here()) { renderTurns(); renderAskButtons(); renderMic(); }
+  renderSessions(); pollAsks();
   try {
-    const r = await api(`/api/sessions/${id}/ask`, { said, want_prompt: !summaryOnly });
-    if (CUR && CUR.id === id) {
-      CUR.history.push({ ...r, session: id, session_title: CUR.title });
-      renderTurns();
-      $("#micst").textContent = "管家已回复 ✓";
-      if (r.prompt) { try { await navigator.clipboard.writeText(r.prompt); $("#micst").textContent = "管家已回复 ✓ prompt 已复制到剪贴板"; } catch {} }
-    }
+    const r = await api(`/api/sessions/${sid}/ask`, { said, want_prompt: !summaryOnly });
+    delete ASKS[sid];
+    NOTE[sid] = "管家已回复 ✓";
+    if (here()) {
+      // 定时刷新可能已经把这条从服务器拿回来了，不要重复加
+      if (!CUR.history.some(h => h.said === r.said && h.reply === r.reply)) CUR.history.push({ ...r, session: sid, session_title: CUR.title });
+      if (r.prompt) { try { await navigator.clipboard.writeText(r.prompt); NOTE[sid] = "管家已回复 ✓ prompt 已复制到剪贴板"; } catch {} }
+    } else UNREAD.add(sid);
   } catch (e) {
-    // 失败：原文放回输入框（如果用户没在输入别的），气泡标成失败
-    if (!summaryOnly && !ta.value.trim()) { ta.value = said; ta.oninput(); }
-    const p = $("#pending");
-    if (p) {
-      p.removeAttribute("id");
-      p.querySelector(".said").classList.add("failed");
-      const box = p.querySelector("#thinkbox");
-      box.removeAttribute("id"); box.className = "bot err";
-      box.textContent = "发送失败：" + e.message + (summaryOnly ? "" : "（原文已放回输入框）");
+    // 失败：原文回到这个会话——正看着它且输入框是空的就放回去，已经切走就存成它的草稿；气泡标成失败
+    let back = false;
+    if (!summaryOnly) {
+      if (here()) { const ta = $("#said"); if (!ta.value.trim()) { ta.value = said; ta.oninput(); back = true; } }
+      else { DRAFT[sid] = [said, DRAFT[sid]].filter(Boolean).join(" "); back = true; }
     }
-    $("#micst").textContent = "发送失败";
+    ASKS[sid] = { ...ASKS[sid], state: "failed", error: e.message, back, seen: here() };
+    NOTE[sid] = "发送失败";
   }
-  clearInterval(tick);
-  btn.textContent = label;
-  busy = false; $("#sendbtn").disabled = $("#sumbtn").disabled = false;
+  if (here()) { renderTurns(); renderAskButtons(); renderMic(); }
+  renderSessions();
 }
+function renderAskButtons() {
+  const send = $("#sendbtn"), sum = $("#sumbtn");
+  if (!send || !CUR) return;
+  const a = ASKS[CUR.id], pending = !!a && a.state !== "failed";
+  send.disabled = sum.disabled = pending;
+  send.textContent = pending && !a.summaryOnly ? "发送中…" : "发送";
+  sum.textContent = pending && a.summaryOnly ? "归纳中…" : "只归纳";
+}
+// 有请求没回来时，每 1.5 秒问一次服务器：排队中还是已经在思考
+let polling = false;
+async function pollAsks() {
+  if (polling) return;
+  polling = true;
+  while (Object.values(ASKS).some(a => a.state !== "failed")) {
+    try {
+      const list = await api("/api/asks");
+      for (const [sid, a] of Object.entries(ASKS)) {
+        const s = a.state !== "failed" && list.find(x => x.session === sid);
+        if (s) { a.state = s.state === "queued" ? "queued" : "thinking"; a.ahead = s.ahead; }
+      }
+      renderSessions();
+    } catch {}
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  polling = false;
+}
+// 思考计时和录音计时，只更新正在看的会话
+setInterval(() => {
+  if (!CUR) return;
+  const a = ASKS[CUR.id], e = $("#thinking");
+  if (e && a && a.state !== "failed") e.textContent = thinkingText(a);
+  if (REC && REC.sid === CUR.id) renderMic();
+}, 500);
 
 // ---------- 设置 ----------
 async function openSettings() {
@@ -691,46 +754,78 @@ async function micStream() {
   return open(dev);
 }
 
-function setupMic() {
+function setupMic() { $("#mic").onclick = toggleRecording; }
+function renderMic() {
   const btn = $("#mic"), st = $("#micst");
-  let rec = null, chunks = [], t0, timer;
-  btn.onclick = async () => {
-    if (rec) { rec.stop(); return; }
-    let stream;
-    try { stream = await micStream(); }
-    catch (e) {
-      st.textContent = "无法使用麦克风";
-      alert("无法使用麦克风：" + e.message + "\n\n" + (DESKTOP
-        ? "请在「系统设置 → 隐私与安全性 → 麦克风」里允许 Research Manager。"
-        : "请用 Chrome 或 Safari 打开 http://localhost:8765，并在「系统设置 → 隐私与安全性 → 麦克风」里允许该浏览器。"));
-      return;
-    }
-    chunks = []; rec = new MediaRecorder(stream);
-    rec.ondataavailable = e => chunks.push(e.data);
-    rec.onstop = async () => {
-      clearInterval(timer); stream.getTracks().forEach(t => t.stop());
-      const type = rec.mimeType || chunks[0]?.type || "audio/webm";   // 实际录的格式（WebKit 是 mp4）
-      btn.classList.remove("recording"); btn.disabled = true; rec = null;
-      st.textContent = "识别中…";
-      try {
-        const r = await fetch("/api/transcribe", { method: "POST", body: new Blob(chunks, { type }) });
-        const j = await r.json(); if (j.error) throw new Error(j.error);
-        const t = $("#said"); t.value = (t.value ? t.value + " " : "") + j.text; t.oninput();
-        // 说完直接发给管家，默认会带一条 prompt 回来
-        st.textContent = "识别完成，已发给管家";
-        ask();
-      } catch (e) { st.textContent = "识别失败：" + e.message; }
-      btn.disabled = false;
-    };
-    rec.start(); btn.classList.add("recording"); t0 = Date.now();
-    timer = setInterval(() => st.textContent = `● 录音中 ${((Date.now() - t0) / 1000) | 0}s，再点一次结束`, 300);
+  if (!btn || !CUR) return;
+  const id = CUR.id, v = VOICE[id], mine = REC && REC.sid === id;
+  btn.classList.toggle("recording", !!mine);
+  btn.disabled = v === "transcribing";
+  st.textContent = mine ? `● 录音中 ${((Date.now() - REC.t0) / 1000) | 0}s，再点一次结束`
+    : v === "transcribing" ? "识别中…"
+    : NOTE[id] || "说完自动发送 · 每次都会附一条 prompt";
+}
+async function toggleRecording() {
+  if (REC) { REC.rec.stop(); return; }   // 录音只会属于当前会话（切走时已经自动结束），再点一次就是结束
+  if (!CUR) return;
+  const sid = CUR.id;   // 点下录音的这一刻定下所属会话，录音、识别、发送全程都用它
+  if (VOICE[sid] === "transcribing") return;
+  let stream;
+  try { stream = await micStream(); }
+  catch (e) {
+    NOTE[sid] = "无法使用麦克风"; renderMic();
+    alert("无法使用麦克风：" + e.message + "\n\n" + (DESKTOP
+      ? "请在「系统设置 → 隐私与安全性 → 麦克风」里允许 Research Manager。"
+      : "请用 Chrome 或 Safari 打开 http://localhost:8765，并在「系统设置 → 隐私与安全性 → 麦克风」里允许该浏览器。"));
+    return;
+  }
+  if (!CUR || CUR.id !== sid || REC) { stream.getTracks().forEach(t => t.stop()); return; }   // 打开麦克风的这一会儿切走了
+  const rec = new MediaRecorder(stream), chunks = [];
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    const type = rec.mimeType || chunks[0]?.type || "audio/webm";   // 实际录的格式（WebKit 是 mp4）
+    REC = null;
+    transcribeFor(sid, new Blob(chunks, { type }));
   };
+  REC = { sid, rec, t0: Date.now() };
+  delete NOTE[sid];
+  rec.start();
+  renderMic(); renderSessions();
+}
+async function transcribeFor(sid, blob) {
+  VOICE[sid] = "transcribing";
+  if (CUR && CUR.id === sid) renderMic();
+  renderSessions();
+  try {
+    const r = await fetch("/api/transcribe", { method: "POST", body: blob });
+    const j = await r.json(); if (j.error) throw new Error(j.error);
+    delete VOICE[sid];
+    if (CUR && CUR.id === sid) {
+      // 还在这个会话：照常填进输入框并发送（说完直接发给管家，默认会带一条 prompt 回来）
+      const t = $("#said"); t.value = (t.value ? t.value + " " : "") + j.text; t.oninput();
+      ask();
+    } else {
+      // 已经切走：不碰当前会话的输入框，连同原会话没发出去的草稿一起在后台发给原会话
+      const said = [DRAFT[sid], j.text].filter(Boolean).join(" ");
+      delete DRAFT[sid];
+      if (ASKS[sid] && ASKS[sid].state !== "failed") { DRAFT[sid] = said; NOTE[sid] = "上一条还在处理，识别出的话已放进输入框"; }
+      else ask(false, sid, said);
+    }
+  } catch (e) {
+    VOICE[sid] = { error: e.message };   // 提示留在原会话：回到它时显示在输入框下面，左栏标“识别失败”
+  }
+  if (CUR && CUR.id === sid) {
+    if (VOICE[sid] && VOICE[sid].error) { NOTE[sid] = "识别失败：" + VOICE[sid].error; delete VOICE[sid]; }
+    renderMic();
+  }
+  renderSessions();
 }
 
 // 左栏和当前会话各刷各的，互不等待；失败只影响这一轮
 function refresh() {
   loadSessions().catch(() => {});
-  if (CUR && !busy) openSession(CUR.id).catch(() => {});
+  if (CUR) openSession(CUR.id).catch(() => {});
 }
 // 窗口被隐藏或在后台时，WebKit 会把定时器降到大约每分钟一次；窗口回到前台时立刻刷新一次
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
