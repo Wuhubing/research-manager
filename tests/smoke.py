@@ -5,6 +5,7 @@
 - 在本进程里另起一个服务（127.0.0.1:8799），用的是 server.py 里同一套路由，不碰 8765。
   不用 `python3 server.py` 启动，因为它启动时会停掉本机所有残留的录音进程（kill_stale_recordings）。
 - 抓一次 Lab.run_claude() 生成的 claude 命令（会话在项目子目录里），检查权限参数。
+- 用假的 claude（每次 0.5 秒）并发提问，检查同一个项目排队、不同项目不互相等、状态文件不被写坏。
 - 不调用 claude、OpenAI、ffmpeg。
 """
 import json
@@ -113,6 +114,7 @@ def main():
     try:
         http_checks()
         command_checks()
+        concurrency_checks()
     finally:
         httpd.shutdown()
     check("真实的 ~/.research-manager 没被改动",
@@ -252,6 +254,106 @@ def command_checks():
     check("一次性调用（交接）：不 --resume，用交接提示词，不保存会话",
           "--resume" not in cmd and values(cmd, "--append-system-prompt") == [prompts.HANDOFF_SYSTEM]
           and "--no-session-persistence" in cmd, cmd[-4:])
+
+
+class FakeClaude:
+    """假的 claude -p：睡 0.5 秒，按运行目录（= 项目的 .research）统计同时在跑的个数，返回一个固定的回复。"""
+    lock, running, peak, calls = threading.Lock(), {}, {}, []
+
+    def __init__(self, cmd, **kw):
+        import io
+        cwd = str(kw.get("cwd"))
+        with FakeClaude.lock:
+            FakeClaude.calls.append({"cmd": cmd, "cwd": cwd})
+            FakeClaude.running[cwd] = FakeClaude.running.get(cwd, 0) + 1
+            FakeClaude.peak[cwd] = max(FakeClaude.peak.get(cwd, 0), FakeClaude.running[cwd])
+            FakeClaude.total = sum(FakeClaude.running.values())
+            FakeClaude.peak_all = max(getattr(FakeClaude, "peak_all", 0), FakeClaude.total)
+        time.sleep(0.5)
+        with FakeClaude.lock:
+            FakeClaude.running[cwd] -= 1
+        self.stdin = io.StringIO()
+        self.stdin.close = lambda: None
+        n = len(FakeClaude.calls)
+        self.stdout = iter([json.dumps({"type": "result", "result": f"## 发生了什么\n第 {n} 次回复",
+                                        "session_id": f"99999999-0000-4000-8000-{n:012d}"}) + "\n"])
+        self.stderr, self.returncode = io.StringIO(""), 0
+
+    def wait(self):
+        return 0
+
+    @classmethod
+    def reset(cls):
+        cls.running, cls.peak, cls.calls, cls.peak_all = {}, {}, [], 0
+
+
+def together(*calls):
+    """同时发几个请求，返回各自的 (状态码, 结果)；第一个请求先走 0.1 秒，排队顺序固定。"""
+    out = [None] * len(calls)
+
+    def run(i, method, path, body):
+        time.sleep(0.1 * i)
+        out[i] = call(method, path, body)
+    ts = [threading.Thread(target=run, args=(i, *c)) for i, c in enumerate(calls)]
+    [t.start() for t in ts]
+    return ts, out
+
+
+def concurrency_checks():
+    print("并发提问（假的 claude，每次 0.5 秒）")
+    root_id = "44444444-4444-4444-8444-444444444444"      # 同一个项目根目录里的另一个会话
+    session_file(PROJ, root_id, [user(PROJ, "根目录里的工作")])
+    rdir = PROJ / ".research"
+    for f in ("state.json", "history.json", "log.md"):
+        (rdir / f).unlink(missing_ok=True)
+    real = manager.subprocess.Popen
+    manager.subprocess.Popen = lambda cmd, *a, **kw: FakeClaude(cmd, **kw) if cmd[:2] == ["claude", "-p"] else real(cmd, *a, **kw)
+    try:
+        FakeClaude.reset()
+        ts, out = together(("POST", f"/api/sessions/{MAIN_ID}/ask", {"said": "问题一"}),
+                           ("POST", f"/api/sessions/{root_id}/ask", {"said": "问题二"}))
+        time.sleep(0.35)
+        code, asks = call("GET", "/api/asks")
+        states = sorted((a.get("state"), a.get("ahead")) for a in asks) if isinstance(asks, list) else asks
+        check("同一个项目同时问：/api/asks 显示一个思考中、一个排队中（前面 1 个）",
+              code == 200 and states == [("queued", 1), ("running", 0)], (code, asks))
+        [t.join() for t in ts]
+        check("两个请求都成功", [o[0] for o in out] == [200, 200], out)
+        check("同一个项目的 claude 没有同时跑", FakeClaude.peak.get(str(rdir)) == 1, FakeClaude.peak)
+        hist = json.loads((rdir / "history.json").read_text())
+        check("history.json 里两条都在、字段齐全",
+              sorted(h.get("said") for h in hist) == ["问题一", "问题二"]
+              and all({"time", "session", "session_title", "said", "reply"} <= h.keys() for h in hist), hist)
+        st = json.loads((rdir / "state.json").read_text())
+        check("state.json 是完整的 JSON，两个会话的 offset 都在", {MAIN_ID, root_id} <= set(st.get("offsets", {})), st)
+        first_id = "99999999-0000-4000-8000-000000000001"
+        check("只有一个管家会话：第二个请求接着第一个请求建的会话（--resume）",
+              st.get("manager_session") == first_id and values(FakeClaude.calls[1]["cmd"], "--resume") == [first_id],
+              (st.get("manager_session"), FakeClaude.calls[1]["cmd"][-4:]))
+        code, asks = call("GET", "/api/asks")
+        check("问完以后 /api/asks 是空的", code == 200 and asks == [], asks)
+
+        FakeClaude.reset()
+        ts, out = together(("POST", f"/api/sessions/{MAIN_ID}/ask", {"said": "问题三"}),
+                           ("POST", f"/api/sessions/{OTHER_ID}/ask", {"said": "别的项目"}))
+        [t.join() for t in ts]
+        check("不同项目同时问：两个 claude 同时在跑，互不等待",
+              [o[0] for o in out] == [200, 200] and FakeClaude.peak_all == 2, (out, FakeClaude.peak_all))
+
+        FakeClaude.reset()
+        before = json.loads((rdir / "state.json").read_text())
+        ts, out = together(("POST", f"/api/sessions/{root_id}/handoff", {}),
+                           ("POST", f"/api/sessions/{MAIN_ID}/ask", {"said": "交接时提问"}))
+        [t.join() for t in ts]
+        st = json.loads((rdir / "state.json").read_text())
+        check("交接和提问同时进行：两个都成功，交接不盖掉提问刚存的 offset",
+              [o[0] for o in out] == [200, 200] and st["offsets"][MAIN_ID] >= before["offsets"][MAIN_ID]
+              and st.get("manager_session") == first_id and len(json.loads((rdir / "history.json").read_text())) == 4,
+              (out, st))
+        check("交接是一次性调用，没有用 --resume", "--resume" not in FakeClaude.calls[0]["cmd"]
+              and "--no-session-persistence" in FakeClaude.calls[0]["cmd"], FakeClaude.calls[0]["cmd"][-4:])
+    finally:
+        manager.subprocess.Popen = real
 
 
 if __name__ == "__main__":

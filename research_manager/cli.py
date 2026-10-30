@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from .macos import copy_to_clipboard, open_terminal_session
-from .manager import BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW, Lab, parse_reply
+from .manager import BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW, Lab, parse_reply, project_lock
 from .sessions import context_usage, session_title
 from .voice import start_recording, stop_recording, transcribe_recording
 
@@ -31,8 +31,10 @@ def colorize(text):
 
 
 def handle(lab, said):
-    reply = lab.ask(said, want_prompt=bool(said))
-    lab.log(said, reply)
+    with project_lock(lab.dir):   # 网页或 App 可能同时在问同一个项目的管家：排队，拿到锁后读最新的状态
+        lab.load_state()
+        reply = lab.ask(said, want_prompt=bool(said))
+        lab.log(said, reply)
     mainline, shown, prompt = parse_reply(reply)
     print("\n" + colorize(shown) + "\n")
     if prompt:

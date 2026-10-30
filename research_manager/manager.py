@@ -1,9 +1,12 @@
 """管家：调用只读的 claude -p，读工作会话的新动态，记录历史、主线和交接。"""
+import fcntl
 import json
 import os
 import re
 import subprocess
 import time
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 from .prompts import HANDOFF_SYSTEM, MAINLINE_TEMPLATE, SYSTEM
@@ -12,6 +15,9 @@ from .watch import load_links
 
 
 CLAUDE_MODEL = os.environ.get("LAB_CLAUDE_MODEL", "")
+
+# 本服务里正在进行的管家请求 {编号: {"session", "project", "state": "queued" | "running", "since"}}，网页用来显示“排队中 / 思考中”
+ASKING = {}
 
 DIM, BOLD, RED, GREEN, YELLOW, CYAN, RESET = "\033[2m", "\033[1m", "\033[31m", "\033[32m", "\033[33m", "\033[36m", "\033[0m"
 
@@ -41,7 +47,7 @@ class Lab:
         self.dir = self.project / ".research"
         self.dir.mkdir(exist_ok=True)
         self.state_file = self.dir / "state.json"
-        self.state = json.loads(self.state_file.read_text()) if self.state_file.exists() else {}
+        self.load_state()
         self.mainline_file = self.dir / "mainline.md"
         if not self.mainline_file.exists():
             self.mainline_file.write_text(MAINLINE_TEMPLATE)
@@ -49,6 +55,9 @@ class Lab:
             self.work = Path(work)
         else:
             self.choose_session(pick)
+
+    def load_state(self):
+        self.state = json.loads(self.state_file.read_text()) if self.state_file.exists() else {}
 
     def save(self):
         self.state_file.write_text(json.dumps(self.state, ensure_ascii=False, indent=1))
@@ -154,7 +163,8 @@ class Lab:
             raise RuntimeError("管家调用失败：" + (result or {}).get("result", p.stderr.read()[-500:]))
         if resume and not self.state.get("manager_session"):
             self.state["manager_session"] = result["session_id"]
-        self.save()   # 成功后才保存（包括 new_activity 推进的 offset）；失败的话下次会重新读这段
+        if resume:   # 一次性调用（交接）不改状态，不写回，免得盖掉同时在跑的提问刚存的 offset
+            self.save()   # 成功后才保存（包括 new_activity 推进的 offset）；失败的话下次会重新读这段
         return result["result"]
 
     def handoff_checkpoint(self):
@@ -192,9 +202,10 @@ class Lab:
         prompt = f"交接文档在 {path}，请先用 Read 完整读一遍。\n\n{prompt or doc}"
         path.with_suffix(".prompt.txt").write_text(prompt)
         cpf = self.dir / "handoffs.json"
-        cp = json.loads(cpf.read_text()) if cpf.exists() else {}
-        cp[self.work.stem] = {"path": str(path), "size": size, "time": time.time()}
-        cpf.write_text(json.dumps(cp, ensure_ascii=False, indent=1))
+        with project_lock(self.dir, "handoffs"):
+            cp = json.loads(cpf.read_text()) if cpf.exists() else {}
+            cp[self.work.stem] = {"path": str(path), "size": size, "time": time.time()}
+            cpf.write_text(json.dumps(cp, ensure_ascii=False, indent=1))
         return {"doc": doc, "prompt": prompt, "path": str(path), "time": cp[self.work.stem]["time"], "cached": False}
 
     def history(self):
@@ -211,6 +222,48 @@ class Lab:
             f.write(f"\n\n---\n\n## {time.strftime('%Y-%m-%d %H:%M')}"
                     f"（会话：{session_title(self.work) if self.work else '无'}）\n\n"
                     f"**我说**：{said or '（只要归纳）'}\n\n{reply}\n")
+
+
+@contextmanager
+def project_lock(rdir, name="ask"):
+    """同一个项目同一时间只让一个管家请求读写 state.json、history.json、log.md 和管家会话，其余的排队。
+    用文件锁（<项目>/.research/.<name>.lock），终端版 lab 和本地服务之间也互斥；进程退出时系统自动释放。
+    不同项目各用各的锁，互不等待。"""
+    rdir.mkdir(exist_ok=True)
+    with open(rdir / f".{name}.lock", "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def ask_session(sid, said, want_prompt):
+    """网页问管家：先排队拿项目锁，拿到以后才读状态（看到前一个请求存下的 offset 和管家会话），问完记进历史。"""
+    path = find_session(sid)
+    cwd = session_cwd(path)
+    rdir = git_root(cwd) / ".research"
+    key = uuid.uuid4().hex
+    ASKING[key] = {"session": sid, "project": str(rdir.parent), "state": "queued", "since": time.time()}
+    try:
+        with project_lock(rdir):
+            ASKING[key]["state"] = "running"
+            mgr = Lab(cwd, work=path)
+            reply = mgr.ask(said, want_prompt)
+            mgr.log(said, reply)
+            return reply
+    finally:
+        ASKING.pop(key, None)
+
+
+def asking():
+    """正在进行的请求，按项目排好队：[{session, project, state, since, ahead}]，ahead 是同项目里排在前面的个数。"""
+    items = sorted(ASKING.values(), key=lambda a: a["since"])
+    out = []
+    for a in items:
+        same = [b for b in items if b["project"] == a["project"]]
+        out.append({**a, "ahead": same.index(a)})
+    return out
 
 
 def parse_reply(reply):

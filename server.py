@@ -67,6 +67,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(settings.settings_view())
             if self.path == "/api/quick_record/last":
                 return self.send_json({k: voice.QUICK[k] for k in ("state", "text", "error")})
+            if self.path == "/api/asks":  # 正在进行的管家请求（排队中 / 思考中）
+                return self.send_json(manager.asking())
         except Exception as ex:
             return self.send_json({"error": str(ex)}, 400)
         return super().do_GET()
@@ -97,7 +99,14 @@ class Handler(SimpleHTTPRequestHandler):
             if self.path == "/api/watch":
                 watch.save_watch(req.get("ids", []))
                 return self.send_json(watch.load_watch())
-            m = re.fullmatch(r"/api/sessions/([0-9a-f-]+)/(ask|mainline|handoff|newsession)", self.path)
+            m = re.fullmatch(r"/api/sessions/([0-9a-f-]+)/ask", self.path)
+            if m:
+                said = req.get("said", "").strip()
+                reply = manager.ask_session(m.group(1), said, want_prompt=bool(said) and req.get("want_prompt", True))
+                mainline, shown, prompt = manager.parse_reply(reply)
+                return self.send_json({"reply": shown, "prompt": prompt, "mainline": mainline,
+                                       "time": time.time(), "said": said})
+            m = re.fullmatch(r"/api/sessions/([0-9a-f-]+)/(mainline|handoff|newsession)", self.path)
             if m:
                 path = sessions.find_session(m.group(1))
                 mgr = manager.Lab(sessions.session_cwd(path), work=path)
@@ -116,12 +125,6 @@ class Handler(SimpleHTTPRequestHandler):
                     open_terminal_session(mgr.project, pfile)
                     watch.adopt_new_session(mgr.project, m.group(1), started)
                     return self.send_json({"ok": True})
-                said = req.get("said", "").strip()
-                reply = mgr.ask(said, want_prompt=bool(said) and req.get("want_prompt", True))
-                mgr.log(said, reply)
-                mainline, shown, prompt = manager.parse_reply(reply)
-                return self.send_json({"reply": shown, "prompt": prompt, "mainline": mainline,
-                                       "time": time.time(), "said": said})
             return self.send_json({"error": "not found"}, 404)
         except Exception as ex:
             return self.send_json({"error": str(ex)}, 500)

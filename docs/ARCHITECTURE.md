@@ -40,11 +40,11 @@
 
 ### 问管家（网页右栏“问管家” / 终端 `lab` 里说话）
 
-1. 网页：`POST /api/sessions/<id>/ask {said, want_prompt}`。服务端 `Lab(session_cwd(会话), work=会话文件)`，管家固定盯这个会话。
+1. 网页：`POST /api/sessions/<id>/ask {said, want_prompt}` → `manager.ask_session()`。同一个项目同时只跑一个请求：先排队拿项目锁（`<项目>/.research/.ask.lock`，文件锁，终端版 `lab` 也用它），拿到后才 `Lab(session_cwd(会话), work=会话文件)` 读状态，管家固定盯这个会话。不同项目互不等待；排队 / 思考中的请求可以用 `GET /api/asks` 查。
    终端：`Lab(当前目录)`，默认盯项目里（包括子目录里开的）最新的会话，出现更新的会话时自动跟过去。
 2. `new_activity()`：从 `state.json` 里这个会话的 offset 开始读新增的记录，用 `condense()` 压缩到约 4 万字（研究者的话和每轮 agent 最后的回答保留全文，其余截头尾，工具的正常输出不放）。第一次看这个会话时只看最后 400KB。
 3. 拼成一条消息：研究主线 + 新动态（附原始记录路径，管家需要核实原话时自己 Grep）+ 研究者的话；`want_prompt` 时要求一定输出 prompt。
-4. `run_claude()` 调管家，见下文“管家的权限边界”。成功后才保存 offset 和管家会话 id；失败的话下次会重新读这段。
+4. `run_claude()` 调管家，见下文“管家的权限边界”。成功后才保存 offset 和管家会话 id；失败的话下次会重新读这段。一次性调用（交接）不写回状态。
 5. `log()` 把这一轮追加到 `history.json` 和 `log.md`。`parse_reply()` 拆出建议的新主线、正文和 prompt。
 6. 网页显示回复，可以复制 prompt、采纳主线（`POST /api/sessions/<id>/mainline`）；终端版自动复制 prompt，问要不要采纳主线。
 
@@ -52,7 +52,7 @@
 
 1. 网页“交接”按钮：`POST /api/sessions/<id>/handoff {force}`；终端：`/h`（`/h!` 强制重新生成）。
 2. `handoff_checkpoint()`：`handoffs.json` 里记着上次交接时会话文件的大小；大小没变且没有 `force`，直接返回上次的结果。
-3. 否则读整个会话（压缩到约 15 万字）+ 管家最近 8 次对这个会话的归纳，用 `HANDOFF_SYSTEM` 做一次**一次性**调用（不 `--resume`、不保存会话，不占管家的上下文）。
+3. 否则读整个会话（压缩到约 15 万字）+ 管家最近 8 次对这个会话的归纳，用 `HANDOFF_SYSTEM` 做一次**一次性**调用（不 `--resume`、不保存会话，不占管家的上下文，也不写 `state.json`，所以不拿项目锁、不挡提问）。
 4. 写出 `.research/handoff-<时间>.md`（交接文档）和同名的 `.prompt.txt`（新会话的第一条消息，开头是交接文档的路径），更新 `handoffs.json`。
 5. “在新会话中继续”：`POST /api/sessions/<id>/newsession {path}`。服务端只接受 `.research/` 里 `handoff-` 开头且有 `.prompt.txt` 的文件，用 osascript 在 Terminal 里 `cd <项目目录> && claude "$(cat <prompt 文件>)"`。
 6. `adopt_new_session()` 在后台每 2 秒看一次（最多 4 分钟），新会话文件出现后加进关注列表（放在旧会话后面），并在 `links.json` 里记下接替关系，网页上显示“接续自…”。
@@ -89,6 +89,7 @@
 | GET/POST | `/api/settings` | key（只返回末 4 位）、识别模型、上下文窗口 | 网页设置 |
 | POST | `/api/quick_record/start` · `stop` · `copy` | ⌃P 录音 | 菜单栏 |
 | GET | `/api/quick_record/last` | 录音状态、最近的原话、错误 | 菜单栏 |
+| GET | `/api/asks` | 正在进行的管家请求：`[{session, project, state: queued \| running, since, ahead}]`，`ahead` 是同项目里排在前面的个数 | 网页 |
 
 除 `/api/transcribe` 外，POST 只接受 `Content-Type: application/json`，防止别的网页不经预检就跨域改设置。服务只监听 127.0.0.1。
 
@@ -130,6 +131,7 @@ claude -p --output-format stream-json --verbose --permission-mode default
 | `handoffs.json` | `{会话 id: {"path": 交接文档路径, "size": 生成时会话文件大小, "time": 秒}}`，只记每个会话最近一次 | `Lab.handoff()` |
 | `handoff-YYYYMMDD-HHMMSS.md` | 交接文档（`HANDOFF_SYSTEM` 规定的小节，末尾有 ```prompt 块） | `Lab.handoff()` |
 | `handoff-YYYYMMDD-HHMMSS.prompt.txt` | 新会话的第一条消息：`交接文档在 <路径>，请先用 Read 完整读一遍。` + prompt | `Lab.handoff()` |
+| `.ask.lock`、`.handoffs.lock` | 空文件，给 `flock` 用：同一个项目的提问排队、`handoffs.json` 的读改写互斥 | `manager.project_lock()` |
 | `scratch/` | agent 的诊断和测试脚本（约定，不是程序生成的） | 人 / agent |
 
 管家回复的格式（`SYSTEM` 规定，`parse_reply()` 解析）：`## 发生了什么`、`## ⚠ 越界 / 可疑`、`## 和主线的关系`（含【主线推进】/【支线】/【偏离主线】标签）、`## 建议下一步`、`## Prompt`（```prompt 代码块），需要更新主线时末尾附 `<mainline>…</mainline>`。
