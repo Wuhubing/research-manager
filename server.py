@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """科研管理器 — 本地服务。
 
-- /api/transcribe : 浏览器录音 → ffmpeg → whisper.cpp → 文字
+- /api/transcribe : 浏览器录音 → OpenAI 语音转文字
 - /api/prompt     : 口述 + 主线 + 最近记录 → 结构化 prompt（含范围边界，防止 agent 过度发挥）
 - /api/digest     : agent 的输出 → 归纳（做了什么 / 是否越界 / 和主线关系 / 发现 / 下一步）
 - 数据存在 data/projects/<id>.json，同时导出一份可读的 <id>.md 研究日志
@@ -22,14 +22,10 @@ from pathlib import Path
 import lab
 
 ROOT = Path(__file__).resolve().parent
-DATA = ROOT / "data" / "projects"
+DATA = Path(os.environ.get("RM_DATA_DIR", ROOT / "data")) / "projects"
 DATA.mkdir(parents=True, exist_ok=True)
 
 PORT = int(os.environ.get("RM_PORT", "8765"))
-WHISPER_MODEL = os.environ.get(
-    "RM_WHISPER_MODEL",
-    str(Path.home() / ".research-manager/models/ggml-large-v3-turbo-q5_0.bin"),
-)
 CLAUDE_MODEL = os.environ.get("RM_CLAUDE_MODEL", "")  # 留空 = claude 默认模型
 
 
@@ -206,39 +202,44 @@ def make_digest(p, output, prompt_text=None):
     return extract_json(call_claude(DIGEST_SYSTEM, user))
 
 
-# ---------------------------------------------------------------- whisper
+# ---------------------------------------------------------------- 设置
 
-def find_whisper():
-    for name in ("whisper-cli", "whisper-cpp", "main"):
-        path = shutil.which(name)
-        if path:
-            return path
-    return None
+def settings_view():
+    """给设置页看的内容：key 只露最后 4 位。"""
+    key = lab.openai_key()
+    return {"openai_key_set": bool(key), "openai_key_hint": f"sk-…{key[-4:]}" if key else "",
+            "openai_key_from_env": bool(os.environ.get("OPENAI_API_KEY")),
+            "asr_model": lab.asr_model(), "asr_models": lab.ASR_MODELS}
 
 
-def transcribe(audio_bytes, hint=""):
-    exe = find_whisper()
-    if not exe:
-        raise RuntimeError("找不到 whisper-cli，请先运行：brew install whisper-cpp")
-    if not Path(WHISPER_MODEL).exists():
-        raise RuntimeError(f"找不到 Whisper 模型：{WHISPER_MODEL}")
+# ---------------------------------------------------------------- 语音
+
+AUDIO_EXT = {"audio/webm": ".webm", "audio/mp4": ".mp4", "audio/mpeg": ".mp3", "audio/wav": ".wav",
+             "audio/x-m4a": ".m4a", "audio/ogg": ".ogg"}
+
+
+def transcribe(audio_bytes, content_type="", hint=""):
+    ext = AUDIO_EXT.get(content_type.split(";")[0].strip(), ".webm")
     with tempfile.TemporaryDirectory() as td:
-        src, wav = Path(td) / "in.webm", Path(td) / "in.wav"
+        src = Path(td) / f"audio{ext}"
         src.write_bytes(audio_bytes)
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
-                        "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(wav)],
-                       check=True, capture_output=True)
-        # 初始提示让 Whisper 输出简体中文，并认识项目里的术语
-        init = "以下是普通话的科研讨论，夹杂英文术语。" + (hint[:200] if hint else "")
-        r = subprocess.run([exe, "-m", WHISPER_MODEL, "-f", str(wav), "-l", "zh",
-                            "-nt", "-np", "--prompt", init],
-                           capture_output=True, text=True, timeout=600)
-        if r.returncode != 0:
-            raise RuntimeError(f"whisper 失败：{r.stderr[-500:]}")
-        return re.sub(r"\s*\n\s*", "", r.stdout).strip()
+        return lab.transcribe(src, hint)
 
 
 # ---------------------------------------------------------------- Claude Code 会话
+
+# 左栏“我关注的会话”，存在用户目录，换浏览器也不丢
+WATCH_FILE = Path.home() / ".research-manager" / "watch.json"
+
+
+def load_watch():
+    return json.loads(WATCH_FILE.read_text()) if WATCH_FILE.exists() else []
+
+
+def save_watch(ids):
+    WATCH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    WATCH_FILE.write_text(json.dumps([i for i in ids if re.fullmatch(r"[0-9a-f-]{36}", i)]))
+
 
 def session_detail(sid):
     path = lab.find_session(sid)
@@ -292,13 +293,26 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.wfile.write(body)
             if self.path == "/api/sessions":
                 return self.send_json(lab.all_sessions())
+            if self.path == "/api/watch":
+                return self.send_json(load_watch())
+            if self.path == "/api/watched":  # 菜单栏用：关注的会话及其状态
+                ids = load_watch()
+                found = {}
+                for i in ids:
+                    try:
+                        p = lab.find_session(i)
+                        found[i] = {"id": i, "title": lab.session_title(p), "mtime": p.stat().st_mtime}
+                    except Exception:
+                        pass
+                return self.send_json([found[i] for i in ids if i in found])
             m = re.fullmatch(r"/api/sessions/([0-9a-f-]+)", self.path)
             if m:
                 return self.send_json(session_detail(m.group(1)))
             if self.path == "/api/status":
-                return self.send_json({"whisper": bool(find_whisper()),
-                                       "model": Path(WHISPER_MODEL).exists(),
+                return self.send_json({"openai": bool(lab.openai_key()),
                                        "claude": bool(shutil.which("claude"))})
+            if self.path == "/api/settings":
+                return self.send_json(settings_view())
         except Exception as ex:
             return self.send_json({"error": str(ex)}, 400)
         return super().do_GET()
@@ -311,9 +325,24 @@ class Handler(SimpleHTTPRequestHandler):
                 if m:
                     p = load_project(m.group(1))
                     hint = p["name"] + "。" + p["mainline"].get("question", "")
-                return self.send_json({"text": transcribe(self.body(), hint)})
+                return self.send_json({"text": transcribe(self.body(), self.headers.get("Content-Type", ""), hint)})
 
+            # 只接受 JSON：别的网页无法不经预检就跨域发 JSON，防止被偷偷改设置
+            if not self.headers.get("Content-Type", "").startswith("application/json"):
+                return self.send_json({"error": "需要 application/json"}, 415)
             req = json.loads(self.body() or b"{}")
+            if self.path == "/api/settings":
+                if req.get("openai_key"):
+                    key = req["openai_key"].strip()
+                    if not re.fullmatch(r"sk-[A-Za-z0-9_\-]{20,}", key):
+                        return self.send_json({"error": "key 格式不对，应该以 sk- 开头"}, 400)
+                    lab.set_openai_key(key)
+                if req.get("asr_model") in lab.ASR_MODELS:
+                    lab.save_settings(asr_model=req["asr_model"])
+                return self.send_json(settings_view())
+            if self.path == "/api/watch":
+                save_watch(req.get("ids", []))
+                return self.send_json(load_watch())
             m = re.fullmatch(r"/api/sessions/([0-9a-f-]+)/(ask|mainline)", self.path)
             if m:
                 path = lab.find_session(m.group(1))

@@ -271,7 +271,7 @@ function setupMic(btnSel, statusSel, onText) {
       clearInterval(timer);
       stream.getTracks().forEach(t => t.stop());
       btn.classList.remove("recording"); btn.disabled = true; rec = null;
-      say("本地 Whisper 识别中…");
+      say("识别中…");
       try {
         const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
         const r = await fetch(`/api/transcribe?project=${P.id}`, { method: "POST", body: blob });
@@ -413,7 +413,7 @@ async function delEntry(id) {
 
 (async () => {
   const st = await api("/api/status");
-  $("#sys").innerHTML = `Whisper ${st.whisper && st.model ? "✓" : "✗"} · Claude CLI ${st.claude ? "✓" : "✗"}`;
+  $("#sys").innerHTML = `OpenAI ${st.openai ? "✓" : "✗"} · Claude CLI ${st.claude ? "✓" : "✗"}`;
   const list = await loadList();
   let last = null; try { last = localStorage.getItem("rm-last"); } catch {}
   const pick = list.find(p => p.id === last) || list[0];

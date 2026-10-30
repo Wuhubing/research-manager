@@ -3,144 +3,267 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>科研管理器</title>
+<title>Research Manager</title>
 <style>
 :root {
-  --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a65; --line: #e3e1da;
-  --accent: #2f5d50; --accent-ink: #fff; --soft: #eef2ef;
-  --main: #2f7d4f; --branch: #b07a12; --drift: #b23a3a; --rec: #d13b3b; --edit: #b0641a;
+  --bg: #ffffff; --side: #f5f5f7; --card: #ffffff; --ink: #1d1d1f; --ink2: #424245; --gray: #86868b;
+  --line: #e8e8ed; --fill: #f5f5f7; --orange: #d97757; --orange-d: #c15f3c; --orange-t: #fbf1ec;
+  --red: #d14b3c; --red-t: #fbeceb; --green: #2f9e57; --green-t: #eaf6ee; --amber: #b98014; --amber-t: #fbf3e2;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 0 0 .5px rgba(0,0,0,.06);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #161715; --panel: #1f201e; --ink: #ecebe6; --muted: #9a9890; --line: #33342f;
-    --accent: #7fbfa8; --accent-ink: #10201a; --soft: #24302b;
-    --main: #6fcf97; --branch: #e2b450; --drift: #ef7a7a; --edit: #e8a15a;
+    --bg: #1c1c1e; --side: #232325; --card: #2c2c2e; --ink: #f5f5f7; --ink2: #d1d1d6; --gray: #8e8e93;
+    --line: #38383a; --fill: #2c2c2e; --orange: #e08a6c; --orange-d: #eda186; --orange-t: #3a2a24;
+    --red: #ff7b6e; --red-t: #3a2422; --green: #5fd38a; --green-t: #1f3327; --amber: #e8b34e; --amber-t: #3a3020;
+    --shadow: 0 0 0 .5px rgba(255,255,255,.08);
   }
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink);
-  font: 14.5px/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
-.app { display: grid; grid-template-columns: 290px 1fr; height: 100vh; }
-aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
-aside header { padding: 16px 14px 10px; }
-aside h1 { font-size: 16px; margin: 0 0 10px; }
-#search { width: 100%; }
-#sessions { overflow: auto; padding: 0 8px 16px; flex: 1; }
-.group { font-size: 12px; color: var(--muted); margin: 14px 6px 4px; word-break: break-all; }
-.sess { display: block; width: 100%; text-align: left; padding: 7px 10px; border-radius: 8px; border: 0;
-  background: none; color: var(--ink); cursor: pointer; font: inherit; }
-.sess:hover { background: var(--soft); }
-.sess.active { background: var(--soft); font-weight: 600; }
-.sess .t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sess .m { font-size: 12px; color: var(--muted); font-weight: 400; }
-.live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--main); margin-right: 5px; vertical-align: 1px; }
-main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); min-height: 0; }
-.col { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
-.col:last-child { border-right: 0; }
-.colhead { padding: 14px 18px 10px; border-bottom: 1px solid var(--line); }
-.colhead h2 { font-size: 15px; margin: 0; }
-.colbody { overflow: auto; flex: 1; padding: 12px 18px; }
-.status { color: var(--muted); font-size: 12.5px; }
-button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line);
-  background: var(--panel); color: var(--ink); padding: 6px 12px; }
-button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-button:disabled { opacity: .5; cursor: default; }
-button.small { padding: 2px 9px; font-size: 12.5px; }
-textarea, input { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
-textarea { width: 100%; resize: vertical; }
-.act { font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
-.act .u { display: block; font-family: -apple-system, "PingFang SC", sans-serif; font-size: 14px; font-weight: 600;
-  background: var(--soft); padding: 6px 10px; border-radius: 8px; margin: 14px 0 6px; }
-.act .a { display: block; font-family: -apple-system, "PingFang SC", sans-serif; font-size: 13.5px; margin: 4px 0; }
-.act .tool { color: var(--muted); display: block; }
-.act .edit { color: var(--edit); display: block; }
-.act .err { color: var(--drift); display: block; }
-.mainline { background: var(--soft); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-size: 13.5px; }
-.mainline summary { cursor: pointer; font-weight: 600; }
-.turn { margin-bottom: 20px; }
-.said { background: var(--soft); border-radius: 10px; padding: 7px 12px; margin-bottom: 8px; }
-.said .status { display: block; }
-.reply h3 { font-size: 14.5px; margin: 12px 0 4px; }
-.reply ul, .reply ol { margin: 2px 0 6px; padding-left: 20px; }
-.reply p { margin: 4px 0; }
-.reply code { background: var(--soft); padding: 0 4px; border-radius: 4px; font-size: 12.5px; }
-.tag-mainline { color: var(--main); font-weight: 600; } .tag-branch { color: var(--branch); font-weight: 600; } .tag-drift { color: var(--drift); font-weight: 600; }
-.warnsec { background: color-mix(in srgb, var(--drift) 9%, transparent); border-radius: 8px; padding: 2px 12px 6px; }
-.prompt { border: 1px solid var(--accent); border-radius: 10px; margin-top: 8px; }
-.prompt .ph { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); }
-.prompt pre { margin: 0; padding: 10px 12px; white-space: pre-wrap; font: 12.5px/1.55 ui-monospace, Menlo, monospace; max-height: 340px; overflow: auto; }
-.suggest { border: 1px dashed var(--accent); border-radius: 10px; padding: 8px 12px; margin-top: 8px; }
-.suggest pre { white-space: pre-wrap; font-size: 12.5px; margin: 6px 0; }
-.composer { border-top: 1px solid var(--line); padding: 12px 18px; background: var(--panel); }
-.row { display: flex; gap: 8px; align-items: center; }
-.mic { width: 46px; height: 46px; border-radius: 50%; font-size: 19px; display: grid; place-items: center; padding: 0; flex: none; }
-.mic.recording { background: var(--rec); border-color: var(--rec); color: #fff; animation: pulse 1.2s infinite; }
-@keyframes pulse { 50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--rec) 22%, transparent); } }
-.empty { color: var(--muted); padding: 60px 20px; text-align: center; }
-.thinking { color: var(--muted); font-size: 13px; padding: 6px 0; }
-@media (max-width: 1000px) {
+  font: 13.5px/1.55 -apple-system, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; }
+button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+textarea, input { font: inherit; color: var(--ink); }
+.app { display: grid; grid-template-columns: 236px 1fr; height: 100vh; }
+
+/* 桌面 App：给红绿灯留位置，顶部可拖动窗口 */
+.drag { height: 0; }
+body.desktop .drag { height: 38px; flex: none; }
+
+/* ---------- 侧栏 ---------- */
+aside { background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+.side-head { padding: 14px 14px 6px; display: flex; align-items: center; justify-content: space-between; }
+.side-head .t { font-size: 11px; font-weight: 600; color: var(--gray); letter-spacing: .02em; }
+.iconbtn { width: 24px; height: 24px; border-radius: 6px; color: var(--gray); font-size: 17px; line-height: 1; display: grid; place-items: center; }
+.iconbtn:hover { background: rgba(0,0,0,.06); color: var(--ink); }
+#sessions { overflow: auto; padding: 0 8px 12px; flex: 1; }
+.group { font-size: 11px; color: var(--gray); margin: 12px 8px 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess { position: relative; padding: 6px 28px 6px 10px; border-radius: 8px; cursor: default; }
+.sess:hover { background: rgba(0,0,0,.04); }
+.sess.active { background: var(--card); box-shadow: var(--shadow); }
+.sess .t { display: flex; align-items: center; gap: 7px; overflow: hidden; white-space: nowrap; }
+.sess .t span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.sess.active .t { font-weight: 600; }
+.sess .m { font-size: 11px; color: var(--gray); padding-left: 14px; }
+.sess .x { position: absolute; right: 6px; top: 7px; display: none; color: var(--gray); font-size: 15px; width: 20px; height: 20px; border-radius: 5px; }
+.sess:hover .x { display: grid; place-items: center; }
+.sess .x:hover { color: var(--red); background: rgba(0,0,0,.05); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: #c7c7cc; flex: none; }
+.dot.live { background: var(--orange); box-shadow: 0 0 0 3px var(--orange-t); }
+.add { margin: 8px 10px 0; color: var(--orange-d); font-weight: 500; padding: 4px 0; text-align: left; }
+.side-foot { padding: 10px 14px 12px; font-size: 11px; color: var(--gray); border-top: 1px solid var(--line); }
+.side-foot a { color: inherit; }
+
+/* ---------- 主区 ---------- */
+main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 420px); min-height: 0; }
+.col { display: flex; flex-direction: column; min-height: 0; }
+.col + .col { border-left: 1px solid var(--line); }
+.colhead { padding: 0 20px 12px; border-bottom: 1px solid var(--line); flex: none; }
+body:not(.desktop) .colhead { padding-top: 16px; }
+.colhead h2 { font-size: 15px; margin: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.colhead .meta { font-size: 11.5px; color: var(--gray); }
+.colbody { overflow: auto; flex: 1; padding: 14px 20px 20px; }
+.label { font-size: 11px; font-weight: 600; color: var(--gray); margin-bottom: 8px; }
+
+/* agent 动态 */
+.act { font-size: 13px; }
+.act .u { display: block; background: var(--fill); border-radius: 10px; padding: 7px 12px; margin: 16px 0 8px; font-weight: 600; white-space: pre-wrap; }
+.act .a { display: block; color: var(--ink2); margin: 5px 0; white-space: pre-wrap; word-break: break-word; }
+.act .tool, .act .edit, .act .err { display: block; font: 11.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+.act .tool { color: var(--gray); }
+.act .edit { color: var(--orange-d); background: var(--orange-t); padding: 1px 8px; }
+.act .edit.first { border-radius: 6px 6px 0 0; margin-top: 4px; padding-top: 5px; }
+.act .edit.last { border-radius: 0 0 6px 6px; padding-bottom: 5px; margin-bottom: 4px; }
+.act .edit.first.last { border-radius: 6px; }
+.act .err { color: var(--red); }
+
+/* 管家 */
+.mgr-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+.tag.main { color: var(--green); background: var(--green-t); }
+.tag.branch { color: var(--amber); background: var(--amber-t); }
+.tag.drift { color: var(--red); background: var(--red-t); }
+.mainline { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-bottom: 16px; }
+.mainline summary { cursor: pointer; font-weight: 600; font-size: 12.5px; list-style: none; display: flex; justify-content: space-between; }
+.mainline summary::after { content: "展开"; color: var(--gray); font-weight: 400; }
+.mainline[open] summary::after { content: "收起"; }
+.mainline textarea { width: 100%; margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--fill); padding: 8px 10px; font-size: 12.5px; resize: vertical; }
+.turn { margin-bottom: 22px; }
+.said { align-self: flex-end; margin-left: 40px; background: var(--orange-t); color: var(--ink); border-radius: 12px 12px 4px 12px; padding: 7px 12px; margin-bottom: 10px; white-space: pre-wrap; }
+.said .when { display: block; font-size: 10.5px; color: var(--gray); }
+.reply { color: var(--ink2); }
+.reply h3 { font-size: 13px; color: var(--ink); margin: 12px 0 3px; }
+.reply ul, .reply ol { margin: 2px 0 6px; padding-left: 18px; }
+.reply p { margin: 3px 0; }
+.reply code { background: var(--fill); padding: 0 4px; border-radius: 4px; font-size: 12px; }
+.reply b { color: var(--ink); }
+.warnsec { background: var(--red-t); border-radius: 10px; padding: 2px 12px 6px; margin: 8px 0; }
+.warnsec h3 { color: var(--red); }
+.card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-top: 10px; }
+.card .ch { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--line); background: var(--fill); font-size: 12px; font-weight: 600; }
+.card pre { margin: 0; padding: 10px 12px; white-space: pre-wrap; font: 11.5px/1.6 ui-monospace, Menlo, monospace; max-height: 300px; overflow: auto; }
+.pill { height: 24px; padding: 0 11px; border-radius: 12px; font-size: 12px; font-weight: 500; display: inline-flex; align-items: center; gap: 5px; }
+.pill.o { background: var(--orange); color: #fff; }
+.pill.o:hover { background: var(--orange-d); }
+.pill.g { background: var(--fill); color: var(--ink2); border: 1px solid var(--line); }
+.pill:disabled { opacity: .5; cursor: default; }
+.thinking { color: var(--gray); font-size: 12.5px; display: flex; align-items: center; gap: 8px; }
+.composer { border-top: 1px solid var(--line); padding: 10px 14px 12px; flex: none; }
+.crow { display: flex; align-items: flex-end; gap: 10px; }
+.mic { width: 36px; height: 36px; border-radius: 50%; background: var(--orange); color: #fff; display: grid; place-items: center; flex: none; }
+.mic:hover { background: var(--orange-d); }
+.mic.recording { background: var(--red); animation: pulse 1.2s infinite; }
+.mic:disabled { opacity: .5; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--red) 20%, transparent); } }
+.wave { display: inline-flex; align-items: center; gap: 2px; }
+.wave i { display: block; width: 2.5px; border-radius: 2px; background: currentColor; }
+.anim i { animation: bar .9s ease-in-out infinite; }
+.anim i:nth-child(2) { animation-delay: .15s } .anim i:nth-child(3) { animation-delay: .3s } .anim i:nth-child(4) { animation-delay: .45s } .anim i:nth-child(5) { animation-delay: .6s }
+@keyframes bar { 50% { transform: scaleY(.35); } }
+#said { flex: 1; min-height: 36px; max-height: 140px; border: 1px solid var(--line); border-radius: 18px; background: var(--fill); padding: 8px 14px; resize: none; outline: none; }
+#said:focus { border-color: var(--orange); background: var(--card); }
+.cfoot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-left: 46px; }
+.status { color: var(--gray); font-size: 11.5px; }
+.empty { color: var(--gray); text-align: center; padding: 60px 24px; line-height: 1.8; }
+.welcome { grid-column: 1 / -1; display: grid; place-items: center; text-align: center; color: var(--gray); }
+.welcome h1 { color: var(--ink); font-size: 26px; margin: 18px 0 6px; font-weight: 700; }
+
+/* ---------- 添加会话 ---------- */
+dialog#picker { width: min(560px, calc(100vw - 32px)); max-height: 78vh; padding: 0; border: 0; border-radius: 12px;
+  background: var(--card); color: var(--ink); box-shadow: 0 24px 60px rgba(0,0,0,.25), 0 0 0 .5px rgba(0,0,0,.12); display: none; flex-direction: column; }
+dialog#picker[open] { display: flex; }
+dialog#picker::backdrop, dialog#settings::backdrop { background: rgba(0,0,0,.2); }
+dialog#settings { width: min(440px, calc(100vw - 32px)); padding: 0; border: 0; border-radius: 12px;
+  background: var(--card); color: var(--ink); box-shadow: 0 24px 60px rgba(0,0,0,.25), 0 0 0 .5px rgba(0,0,0,.12); }
+.field { width: 100%; height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--fill); padding: 0 10px; outline: none; color: var(--ink); font: inherit; }
+.field:focus { border-color: var(--orange); background: var(--card); }
+#sys { cursor: pointer; color: var(--red); }
+.pk-head { padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
+.pk-head b { font-size: 14px; }
+#pksearch { width: 100%; margin-top: 10px; height: 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--fill); padding: 0 10px; outline: none; }
+#pksearch:focus { border-color: var(--orange); }
+#pklist { overflow: auto; padding: 0 12px 12px; flex: 1; }
+.pk-item { display: flex; gap: 10px; align-items: flex-start; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.pk-item:hover { background: var(--fill); }
+.pk-item input { margin-top: 3px; accent-color: var(--orange); }
+.pk-foot { padding: 10px 18px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+@media (max-width: 900px) {
   .app { grid-template-columns: 1fr; height: auto; } aside { max-height: 40vh; }
-  main { grid-template-columns: 1fr; } .col { border-right: 0; border-bottom: 1px solid var(--line); max-height: 80vh; }
+  main { grid-template-columns: 1fr; } .col + .col { border-left: 0; border-top: 1px solid var(--line); } .col { max-height: 85vh; }
 }
 </style>
 </head>
 <body>
 <div class="app">
   <aside>
-    <header>
-      <h1>🔬 科研管理器</h1>
-      <input id="search" placeholder="搜索会话 / 目录">
-      <div class="status" style="margin-top:6px" id="sys"></div>
-    </header>
+    <div class="drag" data-tauri-drag-region></div>
+    <div class="side-head"><span class="t">关注的会话</span>
+      <span style="display:flex;gap:2px"><button class="iconbtn" title="添加会话" onclick="openPicker()">＋</button><button class="iconbtn" title="设置（⌘,）" onclick="openSettings()" style="font-size:15px">⚙</button></span></div>
     <div id="sessions"></div>
+    <div class="side-foot" id="sys" hidden></div>
   </aside>
-  <main id="main"><div class="empty" style="grid-column:1/-1">← 选一个 Claude Code 会话</div></main>
+  <main id="main"></main>
 </div>
+
+<template id="tpl-welcome">
+  <div class="welcome" data-tauri-drag-region>
+    <div>
+      <svg viewBox="100 100 824 824" width="72" height="72">
+        <rect x="100" y="100" width="824" height="824" rx="185" fill="#d97757"/>
+        <rect x="252" y="300" width="520" height="350" rx="52" fill="none" stroke="#fff" stroke-width="38"/>
+        <path d="M420 744h184M512 650v94" stroke="#fff" stroke-width="38" stroke-linecap="round"/>
+        <g stroke="#fff" stroke-width="38" stroke-linecap="round"><path d="M440 420v110"/><path d="M512 380v190"/><path d="M584 428v94"/></g>
+      </svg>
+      <h1>看见 agent 在做什么。</h1>
+      <p id="welcome-hint"></p>
+      <button class="pill o" style="margin-top:14px;height:30px;padding:0 16px" onclick="openPicker()">＋ 添加会话</button>
+    </div>
+  </div>
+</template>
 
 <template id="tpl">
   <section class="col">
-    <div class="colhead">
+    <div class="drag" data-tauri-drag-region></div>
+    <div class="colhead" data-tauri-drag-region>
       <h2 id="stitle"></h2>
-      <div class="status" id="smeta"></div>
+      <div class="meta" id="smeta"></div>
     </div>
-    <div class="colbody"><div class="act" id="activity"></div></div>
+    <div class="colbody"><div class="label">agent 动态</div><div class="act" id="activity"></div></div>
   </section>
   <section class="col">
-    <div class="colhead">
-      <h2>管家</h2>
-      <div class="status">只读查看这个会话和项目文件，对照主线做归纳、写 prompt</div>
+    <div class="drag" data-tauri-drag-region></div>
+    <div class="colhead" data-tauri-drag-region>
+      <div class="mgr-head"><h2>管家</h2><span id="reltag"></span></div>
+      <div class="meta">只读查看会话和项目文件，对照主线归纳、写 prompt</div>
     </div>
     <div class="colbody" id="mgrbody">
       <details class="mainline" id="mlbox">
         <summary>研究主线</summary>
-        <textarea id="mltext" rows="9" style="margin-top:8px;font-size:13px"></textarea>
-        <div class="row" style="margin-top:6px"><button class="small" onclick="saveMainline()">保存</button><span class="status" id="mlst"></span></div>
+        <textarea id="mltext" rows="9"></textarea>
+        <div style="margin-top:6px;display:flex;gap:8px;align-items:center"><button class="pill g" onclick="saveMainline()">保存</button><span class="status" id="mlst"></span></div>
       </details>
-      <div id="turns"></div>
+      <div id="turns" style="display:flex;flex-direction:column"></div>
     </div>
     <div class="composer">
-      <div class="row">
-        <button class="mic" id="mic" title="开始/停止录音">🎙</button>
-        <textarea id="said" rows="2" placeholder="点麦克风说话，或直接打字。比如：它刚才到底干了什么？/ 帮我写个 prompt 让它只改第二题"></textarea>
+      <div class="crow">
+        <button class="mic" id="mic" title="开始 / 停止录音"><span class="wave"><i style="height:6px"></i><i style="height:11px"></i><i style="height:15px"></i><i style="height:10px"></i><i style="height:6px"></i></span></button>
+        <textarea id="said" rows="1" placeholder="问点什么，或点左边说话…"></textarea>
       </div>
-      <div class="row" style="margin-top:8px;justify-content:space-between">
+      <div class="cfoot">
         <span class="status" id="micst">回车发送 · Shift+回车换行</span>
-        <span class="row">
-          <button onclick="ask(true)" id="sumbtn">只归纳</button>
-          <button class="primary" onclick="ask()" id="sendbtn">发送</button>
+        <span style="display:flex;gap:6px">
+          <button class="pill g" onclick="ask(true)" id="sumbtn">只归纳</button>
+          <button class="pill o" onclick="ask()" id="sendbtn">发送</button>
         </span>
       </div>
     </div>
   </section>
 </template>
 
+<dialog id="settings">
+  <div class="pk-head"><b>设置</b></div>
+  <div style="padding:16px 18px;display:flex;flex-direction:column;gap:16px">
+    <div>
+      <div class="label" style="margin-bottom:4px">OpenAI API key（语音识别）</div>
+      <input id="set-key" type="password" autocomplete="off" spellcheck="false" class="field">
+      <div class="status" id="set-key-st" style="margin-top:4px"></div>
+    </div>
+    <div>
+      <div class="label" style="margin-bottom:4px">识别模型</div>
+      <select id="set-model" class="field"></select>
+      <div class="status" style="margin-top:4px">gpt-4o-transcribe 约 0.006 美元/分钟；mini 便宜一半，略不准</div>
+    </div>
+  </div>
+  <div class="pk-foot">
+    <span class="status" id="set-st"></span>
+    <span style="display:flex;gap:8px"><button class="pill g" onclick="$('#settings').close()">取消</button><button class="pill o" onclick="saveSettings()">保存</button></span>
+  </div>
+</dialog>
+
+<dialog id="picker">
+  <div class="pk-head">
+    <b>添加会话</b>
+    <input id="pksearch" placeholder="搜索标题或目录">
+  </div>
+  <div id="pklist"></div>
+  <div class="pk-foot">
+    <span class="status" id="pkcount"></span>
+    <span style="display:flex;gap:8px"><button class="pill g" onclick="$('#picker').close()">取消</button><button class="pill o" onclick="savePicker()">添加</button></span>
+  </div>
+</dialog>
+
 <script>
-let SESSIONS = [], CUR = null, busy = false;
+const DESKTOP = "__TAURI_INTERNALS__" in window || (/AppleWebKit/.test(navigator.userAgent) && !/Safari\//.test(navigator.userAgent));
+if (DESKTOP) document.body.classList.add("desktop");
+
+let SESSIONS = [], WATCH = [], CUR = null, busy = false;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const ago = t => { const m = (Date.now() / 1000 - t) / 60; return m < 1 ? "刚刚" : m < 60 ? `${m | 0} 分钟前` : m < 1440 ? `${(m / 60) | 0} 小时前` : `${(m / 1440) | 0} 天前`; };
+const ago = t => { const m = (Date.now() / 1000 - t) / 60; return m < 3 ? "运行中" : m < 60 ? `${m | 0} 分钟前` : m < 1440 ? `${(m / 60) | 0} 小时前` : `${(m / 1440) | 0} 天前`; };
+const isLive = t => Date.now() / 1000 - t < 180;
 const short = p => p.replace(/^\/Users\/[^/]+/, "~").replace(/~\/Library\/Application Support\/Claude\/scratch-workspaces\/.*/, "（无文件夹）");
+const REL = { "【主线推进】": ["main", "主线推进"], "【支线】": ["branch", "支线"], "【偏离主线】": ["drift", "偏离主线"] };
 
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -149,32 +272,78 @@ async function api(path, body) {
   return j;
 }
 
-// ---------- 会话列表 ----------
+function welcome() {
+  CUR = null;
+  $("#main").innerHTML = "";
+  $("#main").append($("#tpl-welcome").content.cloneNode(true));
+  $("#welcome-hint").textContent = WATCH.length ? "从左边选一个会话" : "先添加一个你想让管家盯着的 Claude Code 会话";
+}
+
+// ---------- 侧栏 ----------
 async function loadSessions() {
-  SESSIONS = await api("/api/sessions");
+  [SESSIONS, WATCH] = await Promise.all([api("/api/sessions"), api("/api/watch")]);
   renderSessions();
 }
-function renderSessions() {
-  const q = $("#search").value.trim().toLowerCase();
+function groupByDir(list) {
   const groups = new Map();
-  for (const s of SESSIONS) {
-    if (q && !(s.title + s.cwd).toLowerCase().includes(q)) continue;
+  for (const s of list) {
     const g = short(s.cwd);
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(s);
   }
-  $("#sessions").innerHTML = [...groups].map(([g, list]) =>
-    `<div class="group">${esc(g)}</div>` + list.map(s => {
-      const live = Date.now() / 1000 - s.mtime < 180;
-      return `<button class="sess ${CUR && CUR.id === s.id ? "active" : ""}" onclick="openSession('${s.id}')">
-        <span class="t">${live ? '<span class="live" title="最近 3 分钟有活动"></span>' : ""}${esc(s.title)}</span>
-        <span class="m">${ago(s.mtime)}</span></button>`;
-    }).join("")).join("") || `<div class="empty">没有找到会话</div>`;
+  return [...groups];
 }
-$("#search").oninput = renderSessions;
+function renderSessions() {
+  const watched = SESSIONS.filter(s => WATCH.includes(s.id));
+  $("#sessions").innerHTML = (watched.length ? groupByDir(watched).map(([g, list]) =>
+    `<div class="group" title="${esc(g)}">${esc(g)}</div>` + list.map(s => `
+      <div class="sess ${CUR && CUR.id === s.id ? "active" : ""}" onclick="openSession('${s.id}')">
+        <div class="t"><span class="dot ${isLive(s.mtime) ? "live" : ""}"></span><span>${esc(s.title)}</span></div>
+        <div class="m">${ago(s.mtime)}</div>
+        <button class="x" title="从列表移除" onclick="event.stopPropagation(); unwatch('${s.id}')">×</button>
+      </div>`).join("")).join("") : "") +
+    `<button class="add" onclick="openPicker()">＋ 添加会话</button>`;
+}
+async function unwatch(id) {
+  WATCH = await api("/api/watch", { ids: WATCH.filter(x => x !== id) });
+  if (CUR && CUR.id === id) welcome();
+  renderSessions();
+}
+
+// ---------- 添加会话 ----------
+let picked = new Set();
+async function openPicker() {
+  picked = new Set(WATCH);
+  $("#pksearch").value = "";
+  renderPicker();
+  $("#picker").showModal();
+  $("#pksearch").focus();
+  SESSIONS = await api("/api/sessions");
+  if ($("#picker").open) renderPicker();
+}
+function renderPicker() {
+  const q = $("#pksearch").value.trim().toLowerCase();
+  const list = SESSIONS.filter(s => !q || (s.title + s.cwd).toLowerCase().includes(q));
+  $("#pklist").innerHTML = groupByDir(list).map(([g, items]) =>
+    `<div class="group">${esc(g)}</div>` + items.map(s => `
+      <label class="pk-item">
+        <input type="checkbox" ${picked.has(s.id) ? "checked" : ""} onchange="this.checked ? picked.add('${s.id}') : picked.delete('${s.id}'); pkCount()">
+        <span><span>${esc(s.title)}</span> <span class="status">· ${ago(s.mtime)}</span></span>
+      </label>`).join("")).join("") || `<div class="empty">没有找到会话</div>`;
+  pkCount();
+}
+function pkCount() { $("#pkcount").textContent = `已选 ${picked.size} 个`; }
+$("#pksearch").oninput = renderPicker;
+async function savePicker() {
+  const ids = [...WATCH.filter(id => picked.has(id)), ...[...picked].filter(id => !WATCH.includes(id))];
+  WATCH = await api("/api/watch", { ids });
+  $("#picker").close();
+  renderSessions();
+  if (!CUR) WATCH.length ? openSession(WATCH[WATCH.length - 1]) : welcome();
+}
 
 // ---------- 打开会话 ----------
-async function openSession(id, keepScroll) {
+async function openSession(id) {
   const d = await api("/api/sessions/" + id);
   const first = !CUR || CUR.id !== id;
   CUR = d;
@@ -183,41 +352,51 @@ async function openSession(id, keepScroll) {
     $("#main").innerHTML = "";
     $("#main").append($("#tpl").content.cloneNode(true));
     setupMic();
-    $("#said").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(); } };
+    const ta = $("#said");
+    ta.onkeydown = e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(); } };
+    ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 140) + "px"; };
     $("#mltext").value = d.mainline;
-    if (d.mainline.includes("：\n") || d.mainline.trim().endsWith("：")) $("#mlbox").open = true;
+    if (/：\s*$/m.test(d.mainline) && !d.history.length) $("#mlbox").open = true;
     renderTurns();
   }
   $("#stitle").textContent = d.title;
-  $("#smeta").textContent = `${short(d.cwd)} · 更新于 ${ago(d.mtime)}`;
-  const box = $("#activity"), atBottom = box.parentElement.scrollHeight - box.parentElement.scrollTop - box.parentElement.clientHeight < 80;
-  box.innerHTML = renderActivity(d.activity);
-  if (first || atBottom) box.parentElement.scrollTop = box.parentElement.scrollHeight;
+  $("#smeta").textContent = `${short(d.cwd)} · ${ago(d.mtime)}`;
+  const body = $("#activity").parentElement;
+  const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
+  $("#activity").innerHTML = renderActivity(d.activity);
+  if (first || atBottom) body.scrollTop = body.scrollHeight;
   renderSessions();
 }
+window.openSession = openSession;
 
 function renderActivity(text) {
   if (!text.trim()) return `<div class="empty">这个会话还没有内容</div>`;
-  return text.split("\n").map(l => {
-    if (l.startsWith("👤")) return `<span class="u">${esc(l.replace("👤 研究者：", "👤 "))}</span>`;
-    if (l.startsWith("🤖")) return `<span class="a">${esc(l.replace("🤖 agent：", "🤖 "))}</span>`;
-    if (/^\s+🔧 (Edit|Write|MultiEdit|NotebookEdit)/.test(l) || /^\s+[-+] /.test(l)) return `<span class="edit">${esc(l)}</span>`;
-    if (/^\s+✗/.test(l)) return `<span class="err">${esc(l)}</span>`;
-    if (/^\s+🔧/.test(l)) return `<span class="tool">${esc(l)}</span>`;
-    return l.trim() ? `<span class="a">${esc(l)}</span>` : "";
+  const lines = text.split("\n");
+  const kind = l => /^\s+🔧 (Edit|Write|MultiEdit|NotebookEdit)/.test(l) || /^\s{6}[-+] /.test(l) ? "edit"
+    : /^\s+✗/.test(l) ? "err" : /^\s+🔧/.test(l) ? "tool" : l.startsWith("👤") ? "u" : l.trim() ? "a" : "";
+  return lines.map((l, i) => {
+    const k = kind(l);
+    if (!k) return "";
+    if (k === "u") return `<span class="u">${esc(l.replace("👤 研究者：", ""))}</span>`;
+    if (k === "a") return `<span class="a">${esc(l.replace("🤖 agent：", ""))}</span>`;
+    let cls = k;
+    if (k === "edit") {
+      if (kind(lines[i - 1] || "") !== "edit") cls += " first";
+      if (kind(lines[i + 1] || "") !== "edit") cls += " last";
+    }
+    const shown = l.trim().replace(/^🔧 (Edit|Write|MultiEdit|NotebookEdit): /, "✎ ").replace(/^🔧 Bash: /, "⌘ ").replace(/^🔧 /, "· ").replace(/^✗ 报错：/, "✕ ");
+    return `<span class="${cls}">${esc(shown)}</span>`;
   }).join("");
 }
 
-// ---------- 管家对话 ----------
+// ---------- 管家 ----------
 function md(text) {
   const lines = esc(text).split("\n");
   let html = "", list = null, inWarn = false;
   const close = () => { if (list) { html += `</${list}>`; list = null; } };
   for (let l of lines) {
-    l = l.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>")
-      .replace(/【主线推进】/g, '<span class="tag-mainline">【主线推进】</span>')
-      .replace(/【支线】/g, '<span class="tag-branch">【支线】</span>')
-      .replace(/【偏离主线】/g, '<span class="tag-drift">【偏离主线】</span>');
+    l = l.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
+    for (const [k, [c, n]] of Object.entries(REL)) l = l.split(k).join(`<span class="tag ${c}">${n}</span>`);
     let m;
     if ((m = l.match(/^#{1,3} (.*)/))) {
       close(); if (inWarn) { html += "</div>"; inWarn = false; }
@@ -232,20 +411,25 @@ function md(text) {
   close(); if (inWarn) html += "</div>";
   return html;
 }
-
+function relOf(reply) {
+  for (const [k, v] of Object.entries(REL)) if ((reply || "").includes(k)) return v;
+  return null;
+}
 function turnHTML(t, i) {
-  const reply = (t.reply || "").replace(/```prompt[\s\S]*?```/, "").replace(/## Prompt\s*$/m, "");
+  const reply = (t.reply || "").replace(/```prompt[\s\S]*?```/, "").replace(/^## Prompt\s*$/m, "");
+  const when = new Date(t.time * 1000).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
   return `<div class="turn">
-    <div class="said"><span class="status">${new Date(t.time * 1000).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}${t.session_title && t.session !== CUR.id ? " · 关于会话：" + esc(t.session_title) : ""}</span>${esc(t.said || "（只要归纳）")}</div>
+    <div class="said"><span class="when">${when}${t.session_title && t.session !== CUR.id ? " · " + esc(t.session_title) : ""}</span>${esc(t.said || "只要归纳")}</div>
     <div class="reply">${md(reply)}</div>
-    ${t.prompt ? `<div class="prompt"><div class="ph"><b>Prompt</b><button class="small" onclick="copyPrompt(${i}, this)">复制</button></div><pre>${esc(t.prompt)}</pre></div>` : ""}
-    ${t.mainline ? `<div class="suggest"><b>建议更新主线</b><pre>${esc(t.mainline)}</pre><button class="small" onclick="adoptMainline(${i}, this)">采纳</button></div>` : ""}
+    ${t.prompt ? `<div class="card"><div class="ch">Prompt<button class="pill o" onclick="copyPrompt(${i}, this)">复制</button></div><pre>${esc(t.prompt)}</pre></div>` : ""}
+    ${t.mainline ? `<div class="card"><div class="ch">建议更新主线<button class="pill g" onclick="adoptMainline(${i}, this)">采纳</button></div><pre>${esc(t.mainline)}</pre></div>` : ""}
   </div>`;
 }
 function renderTurns() {
-  $("#turns").innerHTML = CUR.history.length
-    ? CUR.history.map(turnHTML).join("")
-    : `<div class="empty" style="padding:30px 0">还没和管家聊过。<br>试试点「只归纳」，或者说：“它刚才到底干了什么？”</div>`;
+  $("#turns").innerHTML = CUR.history.length ? CUR.history.map(turnHTML).join("")
+    : `<div class="empty" style="padding:30px 0">还没和管家聊过。<br>点「只归纳」，或者问它：“它刚才到底干了什么？”</div>`;
+  const last = CUR.history.length && relOf(CUR.history[CUR.history.length - 1].reply);
+  $("#reltag").innerHTML = last ? `<span class="tag ${last[0]}">${last[1]}</span>` : "";
   $("#mgrbody").scrollTop = $("#mgrbody").scrollHeight;
 }
 async function copyPrompt(i, btn) {
@@ -261,30 +445,59 @@ async function saveMainline() {
   await api(`/api/sessions/${CUR.id}/mainline`, { text: $("#mltext").value });
   $("#mlst").textContent = "已保存 ✓"; setTimeout(() => $("#mlst").textContent = "", 1500);
 }
-
 async function ask(summaryOnly) {
   if (busy) return;
   const said = summaryOnly ? "" : $("#said").value.trim();
   if (!summaryOnly && !said) return;
   busy = true; $("#sendbtn").disabled = $("#sumbtn").disabled = true;
-  const id = CUR.id;
-  const t0 = Date.now();
-  $("#turns").insertAdjacentHTML("beforeend", `<div class="turn" id="pending"><div class="said">${esc(said || "（只要归纳）")}</div><div class="thinking" id="thinking">管家正在看会话、核实文件…</div></div>`);
+  const id = CUR.id, t0 = Date.now();
+  $("#turns").insertAdjacentHTML("beforeend", `<div class="turn" id="pending"><div class="said">${esc(said || "只要归纳")}</div>
+    <div class="thinking"><span class="wave anim" style="color:var(--orange)"><i style="height:6px"></i><i style="height:11px"></i><i style="height:14px"></i><i style="height:9px"></i><i style="height:5px"></i></span><span id="thinking">管家正在看会话、核实文件…</span></div></div>`);
   $("#mgrbody").scrollTop = $("#mgrbody").scrollHeight;
   const tick = setInterval(() => { const e = $("#thinking"); if (e) e.textContent = `管家正在看会话、核实文件… ${((Date.now() - t0) / 1000) | 0}s`; }, 1000);
   try {
     const r = await api(`/api/sessions/${id}/ask`, { said });
-    if (!summaryOnly) $("#said").value = "";
-    if (CUR.id === id) {
+    if (!summaryOnly) { $("#said").value = ""; $("#said").style.height = "auto"; }
+    if (CUR && CUR.id === id) {
       CUR.history.push({ ...r, session: id, session_title: CUR.title });
       renderTurns();
-      if (r.prompt) { try { await navigator.clipboard.writeText(r.prompt); $("#micst").textContent = "prompt 已自动复制到剪贴板 ✓"; } catch {} }
+      if (r.prompt) { try { await navigator.clipboard.writeText(r.prompt); $("#micst").textContent = "prompt 已复制到剪贴板 ✓"; } catch {} }
     }
   } catch (e) {
     const p = $("#thinking"); if (p) p.textContent = "失败：" + e.message;
   }
   clearInterval(tick);
   busy = false; $("#sendbtn").disabled = $("#sumbtn").disabled = false;
+}
+
+// ---------- 设置 ----------
+async function openSettings() {
+  const s = await api("/api/settings");
+  $("#set-key").value = "";
+  $("#set-key").placeholder = s.openai_key_set ? `已配置 ${s.openai_key_hint}，留空则不修改` : "sk-...";
+  $("#set-key-st").textContent = s.openai_key_from_env ? "当前使用环境变量 OPENAI_API_KEY，这里保存的 key 会被它覆盖"
+    : "保存在 ~/.research-manager/openai_key，只有你自己能读";
+  $("#set-model").innerHTML = s.asr_models.map(m => `<option ${m === s.asr_model ? "selected" : ""}>${m}</option>`).join("");
+  $("#set-st").textContent = "";
+  $("#settings").showModal();
+  $("#set-key").focus();
+}
+window.openSettings = openSettings;
+async function saveSettings() {
+  try {
+    await api("/api/settings", { openai_key: $("#set-key").value.trim(), asr_model: $("#set-model").value });
+    $("#settings").close();
+    checkStatus();
+  } catch (e) { $("#set-st").textContent = e.message; }
+}
+addEventListener("keydown", e => { if (e.metaKey && e.key === ",") { e.preventDefault(); openSettings(); } });
+
+async function checkStatus() {
+  const st = await api("/api/status");
+  const missing = [!st.openai && "OpenAI API key（语音）", !st.claude && "Claude CLI"].filter(Boolean);
+  $("#sys").textContent = missing.length ? `缺少 ${missing.join("、")}，点这里设置` : "";
+  $("#sys").hidden = !missing.length;
+  $("#sys").onclick = openSettings;
 }
 
 // ---------- 录音 ----------
@@ -297,7 +510,9 @@ function setupMic() {
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
     catch (e) {
       st.textContent = "无法使用麦克风";
-      alert("无法使用麦克风：" + e.message + "\n\n请用 Chrome 或 Safari 打开 http://localhost:8765（Claude 内置浏览器不支持麦克风），并在「系统设置 → 隐私与安全性 → 麦克风」里允许该浏览器。");
+      alert("无法使用麦克风：" + e.message + "\n\n" + (DESKTOP
+        ? "请在「系统设置 → 隐私与安全性 → 麦克风」里允许 Research Manager。"
+        : "请用 Chrome 或 Safari 打开 http://localhost:8765，并在「系统设置 → 隐私与安全性 → 麦克风」里允许该浏览器。"));
       return;
     }
     chunks = []; rec = new MediaRecorder(stream);
@@ -305,12 +520,12 @@ function setupMic() {
     rec.onstop = async () => {
       clearInterval(timer); stream.getTracks().forEach(t => t.stop());
       btn.classList.remove("recording"); btn.disabled = true; rec = null;
-      st.textContent = "本地 Whisper 识别中…";
+      st.textContent = "识别中…";
       try {
         const r = await fetch("/api/transcribe", { method: "POST", body: new Blob(chunks, { type: chunks[0]?.type || "audio/webm" }) });
         const j = await r.json(); if (j.error) throw new Error(j.error);
-        const t = $("#said"); t.value = (t.value ? t.value + " " : "") + j.text; t.focus();
-        st.textContent = "识别完成 ✓ 检查一下，回车发送";
+        const t = $("#said"); t.value = (t.value ? t.value + " " : "") + j.text; t.focus(); t.oninput();
+        st.textContent = "识别完成，回车发送";
       } catch (e) { st.textContent = "识别失败：" + e.message; }
       btn.disabled = false;
     };
@@ -320,16 +535,14 @@ function setupMic() {
 }
 
 (async () => {
-  const st = await api("/api/status");
-  $("#sys").innerHTML = `Whisper ${st.whisper && st.model ? "✓" : "✗"} · Claude CLI ${st.claude ? "✓" : "✗"} · <a href="/projects.html" style="color:inherit">旧版项目页</a>`;
+  checkStatus();  // 只在缺依赖时提示
   await loadSessions();
   let last = null; try { last = localStorage.getItem("rm-session"); } catch {}
-  const pick = SESSIONS.find(s => s.id === last);
-  if (pick) openSession(pick.id);
-  // 定时刷新：会话列表和当前会话的动态
+  const pick = SESSIONS.find(s => s.id === last && WATCH.includes(s.id));
+  pick ? openSession(pick.id) : welcome();
   setInterval(async () => {
     await loadSessions();
-    if (CUR && !busy) openSession(CUR.id, true);
+    if (CUR && !busy) openSession(CUR.id);
   }, 15000);
 })();
 </script>

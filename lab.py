@@ -2,7 +2,7 @@
 """lab — 终端里的科研管家。
 
 在研究项目目录里运行 `lab`：
-  - 回车开始录音，再回车结束 → 本地 Whisper 转文字
+  - 回车开始录音，再回车结束 → OpenAI 转文字（gpt-4o-transcribe）
   - 管家（一个持续对话的 Claude CLI 会话）会：
       1. 读取你正在运行的 Claude Code 工作会话里“自上次以来”的新动态
       2. 必要时只读地查看项目文件 / git diff 核实
@@ -21,10 +21,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
+import uuid
 from pathlib import Path
 
-WHISPER_MODEL = os.environ.get(
-    "LAB_WHISPER_MODEL", str(Path.home() / ".research-manager/models/ggml-large-v3-turbo-q5_0.bin"))
 MIC = os.environ.get("LAB_MIC", ":0")  # ffmpeg avfoundation 音频设备，:0 = 内置麦克风
 CLAUDE_MODEL = os.environ.get("LAB_CLAUDE_MODEL", "")
 
@@ -183,17 +184,78 @@ def record():
     return wav
 
 
-def transcribe(wav, hint=""):
-    exe = shutil.which("whisper-cli")
-    if not exe:
-        raise RuntimeError("找不到 whisper-cli：brew install whisper-cpp")
-    r = subprocess.run([exe, "-m", WHISPER_MODEL, "-f", wav, "-l", "zh", "-nt", "-np",
-                        "--prompt", "以下是普通话的科研讨论，夹杂英文术语。" + hint[:200]],
-                       capture_output=True, text=True)
-    os.unlink(wav)
-    if r.returncode != 0:
-        raise RuntimeError("whisper 失败：" + r.stderr[-300:])
-    return re.sub(r"\s*\n\s*", "", r.stdout).strip()
+OPENAI_KEY_FILE = Path.home() / ".research-manager/openai_key"
+SETTINGS_FILE = Path.home() / ".research-manager/settings.json"
+ASR_MODELS = ["gpt-4o-transcribe", "gpt-4o-mini-transcribe"]
+ASR_CONTEXT = "科研讨论，中文为主，夹杂英文术语。"
+
+
+def openai_key():
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not key and OPENAI_KEY_FILE.exists():
+        key = OPENAI_KEY_FILE.read_text().strip()
+    return key or None
+
+
+def set_openai_key(key):
+    """写入 key 文件，权限 600（只有自己能读）。"""
+    OPENAI_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(OPENAI_KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(key.strip())
+    os.chmod(OPENAI_KEY_FILE, 0o600)
+
+
+def load_settings():
+    try:
+        return json.loads(SETTINGS_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def save_settings(**changes):
+    s = {**load_settings(), **changes}
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(s, ensure_ascii=False, indent=1))
+    return s
+
+
+def asr_model():
+    return os.environ.get("LAB_OPENAI_ASR_MODEL") or load_settings().get("asr_model") or ASR_MODELS[0]
+
+
+def transcribe(path, hint=""):
+    """用 OpenAI 把音频转成文字（wav / webm / mp4 / m4a / mp3 都行）。"""
+    if not openai_key():
+        raise RuntimeError(f"还没有配置 OpenAI API key：写进 {OPENAI_KEY_FILE}，或设置环境变量 OPENAI_API_KEY")
+    boundary = uuid.uuid4().hex
+    fields = {"model": asr_model(), "prompt": ASR_CONTEXT + hint[:300], "response_format": "json"}
+    body = b"".join(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+        for k, v in fields.items())
+    body += (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{Path(path).name}"\r\n'
+             f"Content-Type: application/octet-stream\r\n\r\n").encode() + Path(path).read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/audio/transcriptions", data=body, method="POST",
+        headers={"Authorization": f"Bearer {openai_key()}",
+                 "Content-Type": f"multipart/form-data; boundary={boundary}"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read())["text"].strip()
+    except urllib.error.HTTPError as ex:
+        msg = ex.read().decode("utf-8", "ignore")
+        try:
+            msg = json.loads(msg)["error"]["message"]
+        except Exception:
+            pass
+        raise RuntimeError(f"OpenAI {ex.code}：{msg[:200]}")
+
+
+def transcribe_recording(wav, hint=""):
+    try:
+        return transcribe(wav, hint)
+    finally:
+        os.unlink(wav)
 
 
 # ---------------------------------------------------------------- 管家
@@ -350,7 +412,7 @@ class Lab:
                 if line == "/s":
                     self.handle("")
                     continue
-                said = line or transcribe(record(), self.project.name)
+                said = line or transcribe_recording(record(), self.project.name)
                 if not said:
                     print(f"{YELLOW}没听清，再说一次{RESET}")
                     continue
@@ -389,7 +451,7 @@ def session_cwd(path):
     return None
 
 
-def all_sessions(days=14, limit=200):
+def all_sessions(days=60, limit=400):
     """列出最近的 Claude Code 会话（跳过管家自己的会话）。"""
     cutoff = time.time() - days * 86400
     files = [f for f in (Path.home() / ".claude/projects").glob("*/*.jsonl") if f.stat().st_mtime > cutoff]
