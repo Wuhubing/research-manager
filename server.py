@@ -223,6 +223,13 @@ def settings_view():
 QUICK = {"state": "idle", "proc": None, "wav": None, "text": "", "error": ""}
 
 
+def notify(title, msg):
+    # 用参数传文字，不用拼进脚本，引号、中文都不用转义
+    msg = " ".join(msg.split())[:120]
+    subprocess.run(["osascript", "-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+                    "-e", "end run", title, msg], capture_output=True)
+
+
 def quick_record(action, req):
     if action == "start":
         if QUICK["state"] == "recording":
