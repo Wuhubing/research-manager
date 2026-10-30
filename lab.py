@@ -155,13 +155,36 @@ def clip(s, n):
     return s if len(s) <= n else s[:n] + "…"
 
 
+def headtail(s, n):
+    """超过 n 字时保留开头 2/3 和结尾 1/3，中间注明省略了多少字（agent 的结论常在结尾）。"""
+    s = str(s).strip()
+    if len(s) <= n:
+        return s
+    head, tail = n * 2 // 3, n // 3
+    return f"{s[:head]}…（中间省略 {len(s) - head - tail} 字）…{s[-tail:]}"
+
+
 def condense(path, offset, budget=40000):
-    """把工作会话 jsonl 从 offset 开始压缩成可读的动态记录。返回 (文本, 新 offset)。"""
-    out = []
+    """把工作会话 jsonl 从 offset 开始压缩成可读的动态记录。返回 (文本, 新 offset)。
+
+    - 研究者的话、agent 每轮最后一段话（通常是汇报）保留全文；agent 其他长段落保留开头和结尾
+    - 只处理到最后一个完整的行：会话可能正在写入，没写完的那行留到下次再读，不会丢
+    """
     with open(path, "rb") as f:
         f.seek(offset)
         data = f.read()
-        new_offset = offset + len(data)
+    end = data.rfind(b"\n") + 1
+    data, new_offset = data[:end], offset + end
+    out = []
+    last_agent = None   # 本轮最新一段 agent 文字在 out 里的位置；被后面的 agent 文字盖过时才压缩它
+
+    def settle_agent(full):
+        nonlocal last_agent
+        if last_agent is not None:
+            i, text = last_agent
+            out[i] = f"🤖 agent：{text.strip() if full else headtail(text, 1500)}"
+            last_agent = None
+
     for raw in data.decode("utf-8", "ignore").splitlines():
         try:
             d = json.loads(raw)
@@ -180,9 +203,12 @@ def condense(path, offset, budget=40000):
                 if t == "user":
                     if text.startswith("<") and not text.startswith("<bash-input"):
                         continue
-                    out.append(f"\n👤 研究者：{clip(text, 1500)}")
+                    settle_agent(full=True)      # 研究者开口了：上一段就是那一轮的最后一段，保留全文
+                    out.append(f"\n👤 研究者：{text.strip()}")
                 else:
-                    out.append(f"🤖 agent：{clip(text, 1500)}")
+                    settle_agent(full=False)     # 后面还有话：前一段不是最后一段，保留开头和结尾
+                    out.append(None)
+                    last_agent = (len(out) - 1, text)
             elif bt == "tool_use":
                 inp = b.get("input", {})
                 name = b.get("name", "")
@@ -202,6 +228,7 @@ def condense(path, offset, budget=40000):
                 if isinstance(c, list):
                     c = " ".join(x.get("text", "") for x in c if isinstance(x, dict))
                 out.append(f"   ✗ 报错：{clip(c, 300)}")
+    settle_agent(full=True)                      # 到目前为止的最后一段（可能是正在进行的这一轮）保留全文
     text = "\n".join(out)
     if len(text) > budget:
         text = "（更早的内容已省略）…\n" + text[-budget:]
@@ -373,6 +400,13 @@ class Lab:
         text = self.mainline_file.read_text()
         return text if text.strip() != MAINLINE_TEMPLATE.strip() else "（主线还是空的）"
 
+    def raw_hint(self):
+        """动态是压缩过的；告诉管家原始记录在哪，需要核实原话时可以用 Grep 查"""
+        if not self.work:
+            return ""
+        return (f"（下面是压缩过的记录：长段落省略了中间，工具的正常输出没有包含。"
+                f"原始记录在 {self.work}，每行一个 JSON，需要核实原话或工具输出时用 Grep 搜关键词，不要整个读。）\n")
+
     def new_activity(self):
         if not self.work:
             return "（没有工作会话）"
@@ -391,7 +425,7 @@ class Lab:
     def ask(self, said, want_prompt=False):
         activity = self.new_activity()
         msg = (f"# 研究主线\n{self.mainline()}\n\n"
-               f"# 工作 agent 会话的新动态（会话：{session_title(self.work) if self.work else '无'}）\n{activity}\n\n"
+               f"# 工作 agent 会话的新动态（会话：{session_title(self.work) if self.work else '无'}）\n{self.raw_hint()}{activity}\n\n"
                f"# 研究者这次说的话\n{said or '（研究者没说话，只想要一次归纳）'}")
         if want_prompt:
             msg += ("\n\n# 这次必须输出 Prompt\n"
@@ -407,6 +441,8 @@ class Lab:
                "--tools", "Read,Grep,Glob,Bash",
                "--allowedTools", *ALLOWED_TOOLS,
                "--add-dir", str(self.project)]
+        if self.work:
+            cmd += ["--add-dir", str(self.work.parent)]   # 让管家需要时能只读查看工作会话的原始记录
         if CLAUDE_MODEL:
             cmd += ["--model", CLAUDE_MODEL]
         if resume and self.state.get("manager_session"):
@@ -440,7 +476,7 @@ class Lab:
             raise RuntimeError("管家调用失败：" + (result or {}).get("result", p.stderr.read()[-500:]))
         if resume and not self.state.get("manager_session"):
             self.state["manager_session"] = result["session_id"]
-            self.save()
+        self.save()   # 成功后才保存（包括 new_activity 推进的 offset）；失败的话下次会重新读这段
         return result["result"]
 
     def handoff_checkpoint(self):
@@ -470,7 +506,7 @@ class Lab:
                               for h in self.history()[-8:] if h.get("session") == self.work.stem)
         msg = (f"# 研究主线\n{self.mainline()}\n\n"
                f"# 管家之前对这个会话的归纳（最近几次）\n{recent or '（没有）'}\n\n"
-               f"# 工作会话的完整记录（会话：{session_title(self.work)}，项目目录：{self.project}）\n{full}")
+               f"# 工作会话的完整记录（会话：{session_title(self.work)}，项目目录：{self.project}）\n{self.raw_hint()}{full}")
         doc = self.run_claude(msg, resume=False, system=HANDOFF_SYSTEM)
         path = self.dir / f"handoff-{time.strftime('%Y%m%d-%H%M%S')}.md"
         path.write_text(doc + "\n")
