@@ -139,7 +139,7 @@ lab
 
 - 管家按项目记忆。每个研究项目会有一个持续对话的 Claude 会话，同一项目下的多个工作会话共用它。
 - 每次提问时，管家读取工作会话自上次以来的新动态。Claude Code 的会话记录在 `~/.claude/projects/` 下。
-- **管家只读。** 它只能用 `Read`、`Grep`、`Glob`，以及 `git status/diff/log/show` 和 `ls`，不能修改任何文件。
+- **管家只读。** 它不能修改任何文件，只能读、搜项目目录（git 根目录）里的文件，用 `git status/diff/log/show` 和 `ls`，以及读当前这一个工作会话的记录。密钥类文件（`.env*`、`*.pem`、`*.key`、`id_rsa*`、`.ssh/`）、其他会话的记录和项目以外的路径都读不到。
 - 记录保存在研究项目的 `.research/` 目录里：
   - `mainline.md`：研究主线
   - `history.json`、`log.md`：管家的对话历史和日志

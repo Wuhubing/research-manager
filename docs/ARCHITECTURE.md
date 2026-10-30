@@ -41,7 +41,7 @@
 ### 问管家（网页右栏“问管家” / 终端 `lab` 里说话）
 
 1. 网页：`POST /api/sessions/<id>/ask {said, want_prompt}`。服务端 `Lab(session_cwd(会话), work=会话文件)`，管家固定盯这个会话。
-   终端：`Lab(当前目录)`，默认盯项目里最新的会话，出现更新的会话时自动跟过去。
+   终端：`Lab(当前目录)`，默认盯项目里（包括子目录里开的）最新的会话，出现更新的会话时自动跟过去。
 2. `new_activity()`：从 `state.json` 里这个会话的 offset 开始读新增的记录，用 `condense()` 压缩到约 4 万字（研究者的话和每轮 agent 最后的回答保留全文，其余截头尾，工具的正常输出不放）。第一次看这个会话时只看最后 400KB。
 3. 拼成一条消息：研究主线 + 新动态（附原始记录路径，管家需要核实原话时自己 Grep）+ 研究者的话；`want_prompt` 时要求一定输出 prompt。
 4. `run_claude()` 调管家，见下文“管家的权限边界”。成功后才保存 offset 和管家会话 id；失败的话下次会重新读这段。
@@ -147,8 +147,3 @@ claude -p --output-format stream-json --verbose --permission-mode default
 ### 读取的会话记录
 
 `~/.claude/projects/<cwd 里非字母数字换成 ->/<会话 id>.jsonl`，每行一个 JSON。用到的字段：`type`（`user` / `assistant` / `custom-title` …）、`message.content`、`message.usage`（算上下文用量：最近一条主对话 assistant 的 input + cache 读 + cache 写 token）、`isSidechain`（子 agent，跳过）、`cwd`（取最后出现的）、`customTitle`（会话标题，没有就用第一条用户消息）。
-
-## 已知问题（计划在重构阶段 ② 处理）
-
-1. **终端版 `lab` 在项目子目录里可能找不到会话。** 从 `7634ebb` 起管家的项目目录是 git 根目录，终端版用 `list_sessions(lab.project)`（`Lab.choose_session` / `new_activity`）只在 git 根目录对应的会话文件夹里找；在子目录里开的 Claude Code 会话记录在子目录自己的文件夹下（`~/.claude/projects/<编码后的子目录>/`），所以找不到。网页和 App 固定盯某个会话，不受影响。交接后的 `adopt_new_session()` 也按 git 根目录找，但新会话本来就在 git 根目录打开，目前是一致的。还没有实际测试确认。
-2. **提示词和说明里的权限描述过时。** `research_manager/prompts.py` 的 `SYSTEM` 提示词和 `lab.py` 开头的 docstring 说管家可以用 Read/Grep/Glob，但现在不限路径的 Read/Grep/Glob 已经不放行，只能读项目目录（不含密钥类文件）和当前这一个会话记录，见上文“管家的权限边界”。

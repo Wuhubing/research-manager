@@ -10,7 +10,8 @@
       4. 按你说的话写下一条 prompt，自动复制到剪贴板
   - 一切记录在 <项目>/.research/ 下：mainline.md（主线）、log.md（日志）
 
-管家是只读的：只能 Read/Grep/Glob 和 git status/diff/log/show、ls，不能改任何文件。
+管家是只读的，不能改任何文件。它能读、搜项目目录（git 根目录）里的文件，用 git status/diff/log/show 和 ls，
+读当前这一个工作会话的记录；密钥类文件（.env*、*.pem、*.key、id_rsa*、.ssh/）、其他会话的记录和项目以外的路径都读不到。
 """
 from research_manager.cli import main
 
