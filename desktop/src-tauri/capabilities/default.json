@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "本地启动页和 localhost 上的界面：允许拖动窗口",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://localhost:8765", "http://localhost:8765/*"]
+  },
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
+}

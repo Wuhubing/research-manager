@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Research Manager</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; place-items: center; background: #fff; color: #86868b;
+    font: 14px -apple-system, "PingFang SC", sans-serif; -webkit-user-select: none; }
+  @media (prefers-color-scheme: dark) { body { background: #1c1c1e; } }
+  .box { text-align: center; }
+  svg { width: 88px; height: 88px; }
+  .wave path { animation: b 1s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
+  .wave path:nth-child(2) { animation-delay: .15s } .wave path:nth-child(3) { animation-delay: .3s }
+  @keyframes b { 50% { transform: scaleY(.4); } }
+  p { margin-top: 18px; }
+</style>
+</head>
+<body data-tauri-drag-region>
+  <div class="box">
+    <svg viewBox="100 100 824 824">
+      <rect x="100" y="100" width="824" height="824" rx="185" fill="#d97757"/>
+      <rect x="252" y="300" width="520" height="350" rx="52" fill="none" stroke="#fff" stroke-width="38"/>
+      <path d="M420 744h184M512 650v94" stroke="#fff" stroke-width="38" stroke-linecap="round"/>
+      <g class="wave" stroke="#fff" stroke-width="38" stroke-linecap="round"><path d="M440 420v110"/><path d="M512 380v190"/><path d="M584 428v94"/></g>
+    </svg>
+    <p id="msg">正在启动…</p>
+  </div>
+<script>
+  // 等本地服务起来再跳过去
+  const t0 = Date.now();
+  async function poll() {
+    try {
+      await fetch("http://localhost:8765/api/status", { mode: "no-cors", cache: "no-store" });
+      location.replace("http://localhost:8765/");
+    } catch {
+      if (Date.now() - t0 > 20000) {
+        document.getElementById("msg").textContent = "本地服务没有启动。日志在 ~/.research-manager/server.log";
+      }
+      setTimeout(poll, 400);
+    }
+  }
+  poll();
+</script>
+</body>
+</html>

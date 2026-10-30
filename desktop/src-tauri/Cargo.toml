@@ -1,0 +1,16 @@
+[package]
+name = "research-manager"
+version = "0.2.0"
+description = "Voice + Claude CLI research manager for Claude Code sessions"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+serde_json = "1"
+
+[profile.release]
+strip = true
+lto = true
