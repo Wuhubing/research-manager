@@ -108,6 +108,19 @@ body:not(.desktop) .colhead { padding-top: 16px; }
 .pill.o:hover { background: var(--orange-d); }
 .pill.g { background: var(--fill); color: var(--ink2); border: 1px solid var(--line); }
 .pill:disabled { opacity: .5; cursor: default; }
+.pill, .mic, .iconbtn, .add, .sess { transition: background .12s, transform .08s, opacity .12s; }
+.pill.g:hover:not(:disabled) { background: var(--line); }
+.pill:active:not(:disabled), .mic:active:not(:disabled), .iconbtn:active { transform: scale(.94); }
+.pill.ok { background: var(--green-t); color: var(--green); border-color: var(--green-t); }
+.pill.err { background: var(--red-t); color: var(--red); border-color: var(--red-t); }
+.mainline summary:hover { color: var(--orange-d); }
+.bot { align-self: flex-start; background: var(--fill); border-radius: 12px 12px 12px 4px; padding: 8px 12px; }
+.dots { display: inline-flex; gap: 4px; }
+.dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); animation: dot 1.2s infinite ease-in-out; }
+.dots i:nth-child(2) { animation-delay: .15s; } .dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes dot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+.said.failed { opacity: .55; }
+.bot.err { background: var(--red-t); color: var(--red); }
 .thinking { color: var(--gray); font-size: 12.5px; display: flex; align-items: center; gap: 8px; }
 .composer { border-top: 1px solid var(--line); padding: 10px 14px 12px; flex: none; }
 .crow { display: flex; align-items: flex-end; gap: 10px; }
@@ -225,7 +238,7 @@ dialog#handoff::backdrop { background: rgba(0,0,0,.2); }
       <details class="mainline" id="mlbox">
         <summary>研究主线</summary>
         <textarea id="mltext" rows="9"></textarea>
-        <div style="margin-top:6px;display:flex;gap:8px;align-items:center"><button class="pill g" onclick="saveMainline()">保存</button><span class="status" id="mlst"></span></div>
+        <div style="margin-top:6px;display:flex;gap:8px;align-items:center"><button class="pill g" onclick="saveMainline(this)">保存</button></div>
       </details>
       <div id="turns" style="display:flex;flex-direction:column"></div>
     </div>
@@ -528,8 +541,8 @@ function turnHTML(t, i) {
   return `<div class="turn">
     <div class="said"><span class="when">${when}${t.session_title && t.session !== CUR.id ? " · " + esc(t.session_title) : ""}</span>${esc(t.said || "只要归纳")}</div>
     <div class="reply">${md(reply)}</div>
-    ${t.prompt ? `<div class="card"><div class="ch">Prompt<button class="pill o" onclick="copyPrompt(${i}, this)">复制</button></div><pre>${esc(t.prompt)}</pre></div>` : ""}
-    ${t.mainline ? `<div class="card"><div class="ch">建议更新主线<button class="pill g" onclick="adoptMainline(${i}, this)">采纳</button></div><pre>${esc(t.mainline)}</pre></div>` : ""}
+    ${t.prompt ? `<div class="card"><div class="ch">Prompt<button class="pill o" onclick="copyPrompt(this)">复制</button></div><pre>${esc(t.prompt)}</pre></div>` : ""}
+    ${t.mainline ? `<div class="card"><div class="ch">建议更新主线<button class="pill g" onclick="adoptMainline(this)">采纳</button></div><pre>${esc(t.mainline)}</pre></div>` : ""}
   </div>`;
 }
 function renderTurns() {
@@ -539,41 +552,89 @@ function renderTurns() {
   $("#reltag").innerHTML = last ? `<span class="tag ${last[0]}">${last[1]}</span>` : "";
   $("#mgrbody").scrollTop = $("#mgrbody").scrollHeight;
 }
-async function copyPrompt(i, btn) {
-  await navigator.clipboard.writeText(CUR.history[i].prompt);
-  btn.textContent = "已复制 ✓"; setTimeout(() => btn.textContent = "复制", 1500);
+// 按钮的“处理中 → 已完成 / 失败”状态。keep=true 时完成后保持完成态（比如“已采纳”）
+async function withState(btn, busyText, doneText, fn, keep = false) {
+  const label = btn.dataset.label || (btn.dataset.label = btn.textContent);
+  btn.disabled = true; btn.classList.remove("ok", "err"); btn.textContent = busyText;
+  try {
+    await fn();
+    btn.textContent = doneText; btn.classList.add("ok");
+    if (keep) return;
+  } catch (e) {
+    btn.textContent = "失败"; btn.classList.add("err"); btn.title = e.message;
+  }
+  setTimeout(() => { btn.textContent = label; btn.classList.remove("ok", "err"); btn.disabled = false; }, 1600);
 }
-async function adoptMainline(i, btn) {
-  await api(`/api/sessions/${CUR.id}/mainline`, { text: CUR.history[i].mainline });
-  $("#mltext").value = CUR.history[i].mainline;
-  btn.textContent = "已采纳 ✓"; btn.disabled = true;
+// 复制/采纳都取按钮所在卡片里显示的文字，保证复制的就是看到的
+const cardText = btn => btn.closest(".card").querySelector("pre").textContent;
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return; } catch {}
+  // 有些 WebView 不允许 clipboard API，退回传统复制
+  const t = document.createElement("textarea");
+  t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
+  document.body.append(t); t.select();
+  const ok = document.execCommand("copy");
+  t.remove();
+  if (!ok) throw new Error("没有剪贴板权限");
 }
-async function saveMainline() {
-  await api(`/api/sessions/${CUR.id}/mainline`, { text: $("#mltext").value });
-  $("#mlst").textContent = "已保存 ✓"; setTimeout(() => $("#mlst").textContent = "", 1500);
+function copyPrompt(btn) {
+  return withState(btn, "复制中…", "已复制 ✓", () => copyText(cardText(btn)));
+}
+function adoptMainline(btn) {
+  const text = cardText(btn);
+  return withState(btn, "采纳中…", "已采纳 ✓", async () => {
+    await api(`/api/sessions/${CUR.id}/mainline`, { text });
+    $("#mltext").value = text;
+  }, true);
+}
+function saveMainline(btn) {
+  return withState(btn, "保存中…", "已保存 ✓", () => api(`/api/sessions/${CUR.id}/mainline`, { text: $("#mltext").value }));
 }
 async function ask(summaryOnly) {
   if (busy) return;
-  const said = summaryOnly ? "" : $("#said").value.trim();
+  const ta = $("#said");
+  const said = summaryOnly ? "" : ta.value.trim();
   if (!summaryOnly && !said) return;
-  busy = true; $("#sendbtn").disabled = $("#sumbtn").disabled = true;
+  busy = true;
+  const btn = summaryOnly ? $("#sumbtn") : $("#sendbtn");
+  const label = btn.textContent;
+  $("#sendbtn").disabled = $("#sumbtn").disabled = true;
+  btn.textContent = summaryOnly ? "归纳中…" : "发送中…";
+  if (!summaryOnly) { ta.value = ""; ta.style.height = "auto"; }   // 立刻清空，表示已经发出
   const id = CUR.id, t0 = Date.now();
-  $("#turns").insertAdjacentHTML("beforeend", `<div class="turn" id="pending"><div class="said">${esc(said || "只要归纳")}</div>
-    <div class="thinking"><span class="wave anim" style="color:var(--orange)"><i style="height:6px"></i><i style="height:11px"></i><i style="height:14px"></i><i style="height:9px"></i><i style="height:5px"></i></span><span id="thinking">管家正在看会话、核实文件…</span></div></div>`);
+  if ($("#turns .empty")) $("#turns").innerHTML = "";
+  $("#turns").insertAdjacentHTML("beforeend", `<div class="turn" id="pending" style="display:flex;flex-direction:column">
+    <div class="said">${esc(said || "只要归纳")}</div>
+    <div class="bot thinking" id="thinkbox"><span class="dots"><i></i><i></i><i></i></span><span id="thinking">管家正在思考…</span></div></div>`);
   $("#mgrbody").scrollTop = $("#mgrbody").scrollHeight;
-  const tick = setInterval(() => { const e = $("#thinking"); if (e) e.textContent = `管家正在看会话、核实文件… ${((Date.now() - t0) / 1000) | 0}s`; }, 1000);
+  $("#micst").textContent = "已发送，管家正在处理";
+  const tick = setInterval(() => {
+    const e = $("#thinking");
+    if (e) e.textContent = `管家正在思考… 正在看会话、核实文件 · ${((Date.now() - t0) / 1000) | 0}s`;
+  }, 1000);
   try {
     const r = await api(`/api/sessions/${id}/ask`, { said, want_prompt: !summaryOnly });
-    if (!summaryOnly) { $("#said").value = ""; $("#said").style.height = "auto"; }
     if (CUR && CUR.id === id) {
       CUR.history.push({ ...r, session: id, session_title: CUR.title });
       renderTurns();
-      if (r.prompt) { try { await navigator.clipboard.writeText(r.prompt); $("#micst").textContent = "prompt 已复制到剪贴板 ✓"; } catch {} }
+      $("#micst").textContent = "管家已回复 ✓";
+      if (r.prompt) { try { await navigator.clipboard.writeText(r.prompt); $("#micst").textContent = "管家已回复 ✓ prompt 已复制到剪贴板"; } catch {} }
     }
   } catch (e) {
-    const p = $("#thinking"); if (p) p.textContent = "失败：" + e.message;
+    // 失败：原文放回输入框（如果用户没在输入别的），气泡标成失败
+    if (!summaryOnly && !ta.value.trim()) { ta.value = said; ta.oninput(); }
+    const p = $("#pending");
+    if (p) {
+      p.removeAttribute("id");
+      p.querySelector(".said").classList.add("failed");
+      const box = p.querySelector("#thinkbox");
+      box.removeAttribute("id"); box.className = "bot err";
+      box.textContent = "发送失败：" + e.message + (summaryOnly ? "" : "（原文已放回输入框）");
+    }
+    $("#micst").textContent = "发送失败";
   }
   clearInterval(tick);
+  btn.textContent = label;
   busy = false; $("#sendbtn").disabled = $("#sumbtn").disabled = false;
 }
 
