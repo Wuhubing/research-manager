@@ -1,6 +1,7 @@
 """录音（ffmpeg）、语音识别（OpenAI），以及菜单栏 ⌃P 录音的状态。"""
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -13,16 +14,29 @@ from .macos import copy_to_clipboard, notify
 from .settings import OPENAI_KEY_FILE, asr_model, openai_key
 
 
-MIC = os.environ.get("LAB_MIC", ":0")  # ffmpeg avfoundation 音频设备，:0 = 内置麦克风
+MIC = os.environ.get("LAB_MIC", "")  # ffmpeg avfoundation 音频设备，例如 ":1"；不设就用 Mac 自带的麦克风
 REC_PREFIX = "rm-rec-"     # 录音临时文件名前缀，用来找出残留的录音进程
 REC_MAX_SECONDS = 600      # 单次录音最长 10 分钟；就算启动它的进程意外退出，ffmpeg 也会自己停
+
+
+def mic_device():
+    """录音用的设备：LAB_MIC 指定了就用它，否则用 Mac 自带的麦克风（MacBook Pro Microphone 之类）。
+    按名字选，不用编号 :0：连上 iPhone（连续互通）、装了 Zoom/Teams 之后设备编号会变。"""
+    if MIC:
+        return MIC
+    out = subprocess.run(["ffmpeg", "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+                         capture_output=True, text=True).stderr
+    for name in re.findall(r"\] \[\d+\] (.+)", out.split("audio devices:")[-1]):
+        if re.search(r"MacBook|Built-in|内建", name):
+            return ":" + name.strip()
+    return ":0"
 
 
 def start_recording():
     """后台开始录音，返回 (进程, wav 路径)。终端版和菜单栏录音共用。"""
     with tempfile.NamedTemporaryFile(prefix=REC_PREFIX, suffix=".wav", delete=False) as tmp:
         wav = tmp.name
-    p = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "avfoundation", "-i", MIC,
+    p = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "avfoundation", "-i", mic_device(),
                           "-t", str(REC_MAX_SECONDS), "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav],
                          stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     time.sleep(0.3)
@@ -97,7 +111,18 @@ def transcribe_upload(audio_bytes, content_type="", hint=""):
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / f"audio{ext}"
         src.write_bytes(audio_bytes)
-        return transcribe(src, hint)
+        # 浏览器报的类型不可靠（类型为空时会按 .webm 发出去，而 WebKit 录的其实是 mp4，OpenAI 就报 400“文件损坏”），
+        # 先让 ffmpeg 按实际内容转成 16kHz 单声道 flac 再识别；没装 ffmpeg 才照原样发
+        flac = Path(td) / "audio.flac"
+        try:
+            r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-ar", "16000", "-ac", "1", str(flac)],
+                               capture_output=True, text=True, timeout=120)
+        except FileNotFoundError:
+            return transcribe(src, hint)
+        if r.returncode != 0 or not flac.exists():
+            last = (r.stderr.strip().splitlines() or [""])[-1]
+            raise RuntimeError(f"录音文件读不出来，可能录音中途断了，请再录一次。（ffmpeg：{last[:120]}）")
+        return transcribe(flac, hint)
 
 
 # ---------------------------------------------------------------- 菜单栏录音（⌃P）

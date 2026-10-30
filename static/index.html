@@ -673,13 +673,28 @@ async function checkStatus() {
 }
 
 // ---------- 录音 ----------
+// 默认用 Mac 自带的麦克风：连着 iPhone 时系统可能给 iPhone 的麦克风（连续互通），录出来的文件容易不完整。
+// 第一次授权前拿不到设备名，就先用默认设备打开，授权后再找一次自带麦克风。
+async function micStream() {
+  const builtin = async () => (await navigator.mediaDevices.enumerateDevices())
+    .find(d => d.kind === "audioinput" && /MacBook|Built-in|内建/i.test(d.label));
+  const open = d => navigator.mediaDevices.getUserMedia({ audio: d ? { deviceId: { exact: d.deviceId } } : true });
+  let dev = await builtin();
+  if (dev) return open(dev);
+  const stream = await open(null);
+  dev = await builtin();
+  if (!dev || stream.getAudioTracks()[0]?.label === dev.label) return stream;
+  stream.getTracks().forEach(t => t.stop());
+  return open(dev);
+}
+
 function setupMic() {
   const btn = $("#mic"), st = $("#micst");
   let rec = null, chunks = [], t0, timer;
   btn.onclick = async () => {
     if (rec) { rec.stop(); return; }
     let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    try { stream = await micStream(); }
     catch (e) {
       st.textContent = "无法使用麦克风";
       alert("无法使用麦克风：" + e.message + "\n\n" + (DESKTOP
@@ -691,10 +706,11 @@ function setupMic() {
     rec.ondataavailable = e => chunks.push(e.data);
     rec.onstop = async () => {
       clearInterval(timer); stream.getTracks().forEach(t => t.stop());
+      const type = rec.mimeType || chunks[0]?.type || "audio/webm";   // 实际录的格式（WebKit 是 mp4）
       btn.classList.remove("recording"); btn.disabled = true; rec = null;
       st.textContent = "识别中…";
       try {
-        const r = await fetch("/api/transcribe", { method: "POST", body: new Blob(chunks, { type: chunks[0]?.type || "audio/webm" }) });
+        const r = await fetch("/api/transcribe", { method: "POST", body: new Blob(chunks, { type }) });
         const j = await r.json(); if (j.error) throw new Error(j.error);
         const t = $("#said"); t.value = (t.value ? t.value + " " : "") + j.text; t.oninput();
         // 说完直接发给管家，默认会带一条 prompt 回来

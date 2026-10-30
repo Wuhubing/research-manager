@@ -155,7 +155,7 @@ lab
 | `LAB_CLAUDE_MODEL` | Claude 默认模型 | 管家用的模型，例如 `sonnet`，速度更快 |
 | `OPENAI_API_KEY` | 读 `~/.research-manager/openai_key` | 语音识别用的 OpenAI key |
 | `LAB_OPENAI_ASR_MODEL` | `gpt-4o-transcribe` | 可改成 `gpt-4o-mini-transcribe`，便宜一半 |
-| `LAB_MIC` | `:0` | 终端录音设备（ffmpeg avfoundation）。用 `ffmpeg -f avfoundation -list_devices true -i ""` 查看可用设备 |
+| `LAB_MIC` | Mac 自带的麦克风 | 终端和 ⌃P 录音用的设备（ffmpeg avfoundation），例如 `:1`。用 `ffmpeg -f avfoundation -list_devices true -i ""` 查看可用设备 |
 
 ## 文件
 
